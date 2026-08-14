@@ -210,7 +210,7 @@ def format_username_report(username: str, sherlock: list[str] | None = None,
     lines: list[str] = []
     add = lines.append
     add(f"<b>🧑‍💻 ОТЧЁТ ПО НИКНЕЙМУ</b>")
-    add(f"└ <code>@{str(username)}</code>")
+    add(f"<blockquote>@{str(username)}</blockquote>")
     add("")
 
     if telegram:

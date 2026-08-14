@@ -22,6 +22,11 @@ def block(text: str, emoji: str | None = None) -> str:
     return f"<pre>{body}</pre>" if not emoji else f"{emoji}\n<pre>{body}</pre>"
 
 
+def quote(text: object) -> str:
+    """Блок-цитата для выделения ключевых данных отчёта (номер, ник, email…)."""
+    return f"<blockquote>{esc(text)}</blockquote>"
+
+
 def split_message(text: str, max_len: int = MAX_MSG_LEN) -> list[str]:
     """Режет длинный текст на части.
 

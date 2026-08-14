@@ -219,7 +219,7 @@ def format_email_report(email: str, holehe: dict | None = None,
     lines: list[str] = []
     add = lines.append
     add("<b>📧 ОТЧЁТ ПО EMAIL</b>")
-    add(f"└ <code>{str(email)}</code>")
+    add(f"<blockquote>{str(email)}</blockquote>")
     add("")
 
     if holehe:

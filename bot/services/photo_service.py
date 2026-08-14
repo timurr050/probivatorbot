@@ -20,6 +20,7 @@ import exifread
 from exifread.utils import Ratio
 
 from bot.exceptions import ServiceError
+from bot.services.devices import recognize_device
 
 # Интересные теги, которые не должны потеряться среди мусора
 _PRIORITY_PREFIXES = ("Image ", "EXIF ", "GPS ", "MakerNote ", "Thumbnail ", "Interop ")
@@ -75,6 +76,7 @@ class PhotoReport:
     maps: Optional[dict]
     reverse: Optional[dict]
     raw_count: int
+    device: Optional[dict]
 
 
 def extract_photo(path: Path) -> PhotoReport:
@@ -161,6 +163,8 @@ def extract_photo(path: Path) -> PhotoReport:
     if priority:
         groups["Прочее"] = {k: v for k, v in priority.items() if v}
 
+    device = _find_device(tags)
+
     return PhotoReport(
         file=file_info,
         image=img_info,
@@ -170,7 +174,20 @@ def extract_photo(path: Path) -> PhotoReport:
         maps=maps,
         reverse=reverse,
         raw_count=raw_count,
+        device=device,
     )
+
+
+def _find_device(tags: dict) -> Optional[dict]:
+    """Достаёт Make/Model из тегов exifread и распознаёт устройство."""
+    make = model = ""
+    for key, value in tags.items():
+        name = str(key)
+        if name.endswith(" Make") and not make:
+            make = _val(value)
+        elif name.endswith(" Model") and not model:
+            model = _val(value)
+    return recognize_device(make, model)
 
 
 def _readable_time(path: Path) -> str:
@@ -259,13 +276,22 @@ def _parse_rational_decimal(raw: str) -> Optional[float]:
             return float(raw)
         except ValueError:
             return None
+
+    def _ratio(num: str, den: str) -> Optional[float]:
+        d = float(den)
+        if d == 0.0:
+            return None
+        return float(num) / d
+
     if len(m) < 3:
         if len(m) == 1:
-            return float(m[0][0]) / float(m[0][1])
+            return _ratio(m[0][0], m[0][1])
         return None
-    deg = float(m[0][0]) / float(m[0][1])
-    minute = float(m[1][0]) / float(m[1][1])
-    sec = float(m[2][0]) / float(m[2][1])
+    deg = _ratio(m[0][0], m[0][1])
+    minute = _ratio(m[1][0], m[1][1])
+    sec = _ratio(m[2][0], m[2][1])
+    if deg is None or minute is None or sec is None:
+        return None
     return deg + minute / 60.0 + sec / 3600.0
 
 
@@ -273,7 +299,10 @@ def _gps_alt_v(raw: str) -> Optional[float]:
     import re
     m = re.findall(r"([\d]+)/([\d]+)", raw)
     if m:
-        return float(m[0][0]) / float(m[0][1])
+        d = float(m[0][1])
+        if d == 0.0:
+            return None
+        return float(m[0][0]) / d
     try:
         return float(raw)
     except ValueError:
@@ -358,6 +387,15 @@ def format_photo_report(report: PhotoReport, path: Path) -> str:
     for k, v in report.image.items():
         add(f"│ {str(k)}: <code>{str(v)}</code>")
     add("")
+
+    if report.device:
+        add("<b>📱 Устройство съёмки</b>")
+        add(f"│ Название: <blockquote>{str(report.device['name'])}</blockquote>")
+        if report.device.get("make"):
+            add(f"│ Производитель: <code>{str(report.device['make'])}</code>")
+        if report.device.get("model"):
+            add(f"│ Модель (тег): <code>{str(report.device['model'])}</code>")
+        add("")
 
     if report.gps:
         add("<b>📍 GPS-координаты</b>")

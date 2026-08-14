@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from bot.exceptions import ServiceError
+from bot.services.devices import recognize_device
 from bot.services.photo_service import build_maps_link, reverse_geocode
 
 # атомы-контейнеры, внутрь которых нужно заходить
@@ -58,6 +59,7 @@ class VideoReport:
     maps: Optional[dict]
     reverse: dict
     gps_text: list[str]
+    device: Optional[dict]
 
 
 class _Atoms:
@@ -287,6 +289,8 @@ def extract_video(path: Path) -> VideoReport:
         except Exception as exc:  # noqa: BLE001
             reverse = {"error": str(exc)}
 
+    device = recognize_device(metadata.get("Производитель"), metadata.get("Модель"))
+
     return VideoReport(
         file=file_info,
         container=container,
@@ -295,6 +299,7 @@ def extract_video(path: Path) -> VideoReport:
         maps=maps,
         reverse=reverse,
         gps_text=gps_text,
+        device=device,
     )
 
 
@@ -314,6 +319,15 @@ def format_video_report(report: VideoReport, path: Path) -> str:
         for k, v in report.container.items():
             add(f"│ {str(k)}: <code>{str(v)}</code>")
     add("")
+
+    if report.device:
+        add("<b>📱 Устройство съёмки</b>")
+        add(f"│ Название: <blockquote>{str(report.device['name'])}</blockquote>")
+        if report.device.get("make"):
+            add(f"│ Производитель: <code>{str(report.device['make'])}</code>")
+        if report.device.get("model"):
+            add(f"│ Модель (тег): <code>{str(report.device['model'])}</code>")
+        add("")
 
     if report.gps:
         add("<b>📍 GPS-координаты</b>")

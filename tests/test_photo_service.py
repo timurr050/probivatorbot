@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw
 
 from bot.exceptions import ServiceError
 from bot.services.photo_service import (
+    _gps_alt_v,
     _parse_gps,
     _parse_rational_decimal,
     build_maps_link,
@@ -94,6 +95,35 @@ def test_gps_south_west_ref():
     gps, _, _ = _parse_gps(data)
     assert gps["lat"] == pytest.approx(-55.75)
     assert gps["lng"] == pytest.approx(-37.6)
+
+
+def test_rational_parse_zero_denominator():
+    """Битые GPS-значения с нулевым знаменателем не должны ронять отчёт."""
+    assert _parse_rational_decimal("3/0") is None
+    assert _parse_rational_decimal("[53/1, 53/1, 60/0]") is None
+    assert _parse_rational_decimal("[0/0, 1/1, 2/1]") is None
+    assert _parse_rational_decimal("[5/2, 3/1, 0/0]") is None
+    assert _gps_alt_v("1/0") is None
+    assert _gps_alt_v("0/0") is None
+    assert _gps_alt_v("253/1") == pytest.approx(253.0)
+
+
+def test_parse_gps_zero_denominator_tags():
+    """Весь GPS-парсер переживает битые теги (регрессия ZeroDivisionError)."""
+    data = {
+        "GPS GPSLatitude": "[55/1, 45/1, 0/1]",
+        "GPS GPSLatitudeRef": "N",
+        "GPS GPSLongitude": "[37/1, 36/1, 0/0]",
+        "GPS GPSLongitudeRef": "E",
+        "GPS GPSAltitude": "1/0",
+    }
+    gps, text, maps = _parse_gps(data)
+    assert gps is not None
+    assert gps["lat"] == pytest.approx(55.75)
+    assert "lng" not in gps
+    assert "alt" not in gps
+    assert maps is None
+    assert any("Широта" in line for line in text)
 
 
 def test_maps_links():

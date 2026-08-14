@@ -335,7 +335,7 @@ def format_phone_report(e164: str, info: dict, telegram: dict | None = None,
     lines: list[str] = []
     add = lines.append
     add("<b>📱 ОТЧЁТ ПО НОМЕРУ</b>\n")
-    add(f"└ <code>{str(e164)}</code>")
+    add(f"<blockquote>{str(e164)}</blockquote>")
     add("")
 
     add("<b>▫ Разбор номера</b>")
