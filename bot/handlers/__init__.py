@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from aiogram import Router
 
-from bot.handlers import common, fallback, google, input_handlers, photo
+from bot.handlers import common, errors, fallback, google, input_handlers, photo
 
 
 def build_main_router() -> Router:
@@ -25,3 +25,5 @@ def build_main_router() -> Router:
 
 def register(dp) -> None:
     dp.include_router(build_main_router())
+    # Глобальный перехватчик ошибок: молчание на упавших хендлерах → сообщение
+    dp.errors.register(errors.on_error)

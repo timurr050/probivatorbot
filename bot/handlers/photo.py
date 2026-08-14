@@ -8,7 +8,7 @@ from aiogram.types import Message
 from bot.db import DB
 from bot.exceptions import ProbivError
 from bot.filters import IsAdmin
-from bot.keyboards import after_result_menu
+from bot.keyboards import after_result_menu, main_menu
 from bot.services.photo_service import extract_photo, format_photo_report
 from bot.services.video_service import extract_video, format_video_report
 from bot.states import ProbivStates
@@ -103,6 +103,17 @@ async def _download_media(message: Message) -> tuple[str, object]:
 @router.message(IsAdmin(), F.content_type.not_in({"photo", "document", "video"}), ProbivStates.PHOTO)
 async def photo_wrong_input(message: Message) -> None:
     await message.reply(PHOTO_HINT)
+
+
+@router.message(IsAdmin(), F.content_type.in_({"photo", "document", "video"}))
+async def photo_without_state(message: Message) -> None:
+    """Фото/видео вне состояния PHOTO: раньше бот молчал, теперь подсказывает."""
+    await message.reply(
+        "🖼 Чтобы просканировать фото или видео, выберите в главном меню "
+        "«Фото / EXIF», затем нажмите «Извлечь EXIF и метаданные видео» "
+        "и отправьте файл.",
+        reply_markup=main_menu(),
+    )
 
 
 def _log(user_id: int, category: str, tool: str, target: str,

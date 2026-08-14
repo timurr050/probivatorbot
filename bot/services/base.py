@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import subprocess
@@ -95,6 +96,48 @@ def run_cli(args: Sequence[str], timeout: int | None = None) -> str:
             raise ExternalToolError(
                 f"«{_name(args)}» завершился с кодом {proc.returncode} без вывода"
             )
+    return text
+
+
+async def run_cli_async(args: Sequence[str], timeout: int | None = None,
+                        env: dict | None = None) -> str:
+    """Запускает CLI-команду асинхронно, гарантированно убивая процесс по таймауту.
+
+    В отличие от `run_cli`, процесс при превышении таймаута завершается
+    принудительно (`proc.kill()`), поэтому не оставляет «зомби» в системе
+    и не блокирует событийный цикл после отмены. stdin закрыт (DEVNULL),
+    чтобы интерактивные инструменты не висели в ожидании ввода.
+    """
+    timeout = timeout or SETTINGS.cli_timeout
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *[str(a) for a in args],
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+        )
+    except FileNotFoundError as exc:
+        raise ToolNotConfigured(f"Не удалось запустить: {args[0]}") from exc
+
+    try:
+        raw, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pass  # процесс не умер — не блокируемся дальше
+        raise ToolTimeout(f"Инструмент «{_name(args)}» не уложился в {timeout} сек")
+
+    text = raw.decode(SETTINGS.cli_encoding, errors="replace")
+    if proc.returncode != 0 and not text.strip():
+        raise ExternalToolError(
+            f"«{_name(args)}» завершился с кодом {proc.returncode} без вывода"
+        )
     return text
 
 

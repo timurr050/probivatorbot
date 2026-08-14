@@ -116,8 +116,9 @@ def extract_photo(path: Path) -> PhotoReport:
         img_info = {"Ошибка Pillow": str(exc)}
 
     # ---- exifread :) ----
+    # strict=False: битые/обрезанные файлы не роняют весь отчёт
     with path.open("rb") as f:
-        tags = exifread.process_file(f, details=True, debug=False, strict=True)
+        tags = exifread.process_file(f, details=True, debug=False, strict=False)
 
     groups: dict[str, dict[str, str]] = {}
     gps_values: dict[str, Optional[str]] = {}

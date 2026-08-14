@@ -9,12 +9,15 @@
 """
 from __future__ import annotations
 
-import asyncio
+import json
+import os
 import re
+import sys
+from pathlib import Path
 
 from bot.config import SETTINGS
 from bot.exceptions import ToolNotConfigured
-from bot.services.base import ensure_binary, run_cli
+from bot.services.base import ensure_binary, run_cli_async
 from bot.services.username_service import run_socialscan
 
 
@@ -28,20 +31,7 @@ async def run_holehe(email: str) -> str:
         binary = ensure_binary(None, "holehe")
     except ToolNotConfigured:
         raise ToolNotConfigured("holehe не установлен:\n<code>pip install holehe</code>")
-
-    proc = await asyncio.create_subprocess_exec(
-        str(binary),
-        email,
-        "--no-color",
-        "--only-used",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    try:
-        raw, _ = await asyncio.wait_for(proc.communicate(), timeout=SETTINGS.cli_timeout)
-        return raw.decode(SETTINGS.cli_encoding, errors="replace")
-    except asyncio.TimeoutError:
-        raise ToolNotConfigured("holehe прерван по таймауту. Попробуйте снова позже.")
+    return await run_cli_async([str(binary), email, "--no-color", "--only-used"])
 
 
 def parse_holehe(raw: str, email: str) -> dict[str, str]:
@@ -78,37 +68,47 @@ async def run_h8mail(email: str) -> str:
     except ToolNotConfigured:
         raise ToolNotConfigured("h8mail не установлен:\n<code>pip install h8mail</code>")
 
-    proc = await asyncio.create_subprocess_exec(
-        str(binary),
-        "-t",
-        email,
-        "--loose",
-        "-q",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    try:
-        raw, _ = await asyncio.wait_for(proc.communicate(), timeout=SETTINGS.cli_timeout)
-        return raw.decode(SETTINGS.cli_encoding, errors="replace")
-    except asyncio.TimeoutError:
-        raise ToolNotConfigured("h8mail прерван по таймауту.")
+    # -t <target> --loose: без ключей из .env работает по hunter.io (public API)
+    return await run_cli_async([str(binary), "-t", email, "--loose"])
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def parse_h8mail(raw: str, email: str) -> list[str]:
-    """Извлекает найденные строки из вывода h8mail."""
-    result: list[str] = []
-    lines = raw.splitlines()
+    """Извлекает найденные строки из вывода h8mail (без баннера и ANSI-мусора)."""
+    text = _ANSI_RE.sub("", raw)
+    lines = text.splitlines()
     start = None
     for i, line in enumerate(lines):
         if "Results" in line and "for" in line:
             start = i
             break
     pool = lines[start + 1:] if start is not None else lines
+
+    _BANNER_MARKS = (
+        "h8mail", "use responsibly", "heartfelt email osint", "official h8mail",
+        "posts:", "version 2", "up to date", "removing duplicates", "targets:",
+        "target factory", "is down", "skipping", "github.com/khast3x",
+        "targets started", "scylla",
+    )
+
+    result: list[str] = []
     for line in pool:
         line = line.strip()
-        if not line or line.startswith(("Saving", "Output", "Done", "Query", ">", "[i]")):
+        if not line:
             continue
-        result.append(line)
+        if line.startswith(("Saving", "Output", "Done", "Query", ">", "[i]", "[~]", "[!]", "[>]")):
+            continue
+        low = line.lower()
+        if any(mark in low for mark in _BANNER_MARKS):
+            continue
+        # результаты вида «email:данные» (допускаем префикс [ + ])
+        line = re.sub(r"^\[\+\]\s*", "", line)
+        if email.lower() not in line.lower() and ":" not in line:
+            continue
+        if line not in result:
+            result.append(line)
     return result[:40]
 
 
@@ -116,33 +116,68 @@ def parse_h8mail(raw: str, email: str) -> list[str]:
 # GHunt
 # ----------------------------------------------------------------------------
 
+def _ghunt_creds_exist() -> bool:
+    """Проверяет наличие авторизации GHunt (creds.data)."""
+    cfg = SETTINGS.ghunt_config_path
+    if cfg:
+        p = Path(cfg)
+        if p.is_dir():
+            p = p / "creds.data"
+        if p.exists():
+            return True
+    return (Path.home() / ".pyconfig" / "ghunt" / "creds.data").exists()
+
+
+def _ghunt_env() -> dict:
+    env = dict(os.environ)
+    # ghunt печатает emoji-баннер через rich; в cp1251-консоли Windows это
+    # роняет процесс, поэтому принудительно включаем UTF-8 на стороне потомка.
+    env["PYTHONIOENCODING"] = "utf-8"
+    env.pop("LC_ALL", None)
+    env.pop("LANG", None)
+    return env
+
+
 async def run_ghunt(email: str) -> str:
-    """Запускает GHunt по email (требуется предварительная авторизация ghunt check)."""
+    """Разведка Google-аккаунта через GHunt (требуется авторизация ghunt login)."""
     try:
-        binary = ensure_binary(None, "ghunt")
+        ensure_binary(None, "ghunt")
     except ToolNotConfigured:
         raise ToolNotConfigured("GHunt не установлен:\n<code>pip install ghunt</code>")
 
-    proc = await asyncio.create_subprocess_exec(
-        str(binary),
-        "email",
-        email,
-        "--cookie",
-        "--json",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+    if not _ghunt_creds_exist():
+        raise ToolNotConfigured(
+            "GHunt не авторизован в Google.\n"
+            "Выполните один раз в консоли: <code>ghunt login</code> "
+            "(https://github.com/mxrch/ghunt)"
+        )
+
+    # Запускаем модуль напрямую (минуя баннер, который падает на Windows),
+    # через python -c в отдельном процессе с UTF-8 и закрытым stdin.
+    code = (
+        "import asyncio, sys\n"
+        "from ghunt.modules import email\n"
+        f"asyncio.run(email.hunt(None, {email!r}, None))\n"
     )
-    try:
-        raw, _ = await asyncio.wait_for(proc.communicate(), timeout=SETTINGS.cli_timeout)
-        return raw.decode(SETTINGS.cli_encoding, errors="replace")
-    except asyncio.TimeoutError:
-        raise ToolNotConfigured("GHunt прерван по таймауту.")
+    return await run_cli_async(
+        [sys.executable, "-c", code],
+        env=_ghunt_env(),
+    )
+
+
+_FIELD_NAMES = {
+    "Name": "Имя",
+    "Email": "Email",
+    "Gaia ID": "Gaia ID",
+    "Username": "Ник",
+    "Player ID": "Player ID",
+    "Entity Type": "Тип аккаунта",
+    "Last profile edit": "Последнее изменение профиля",
+}
 
 
 def parse_ghunt(raw: str, email: str) -> dict:
-    """Парсит ключевые поля JSON-вывода GHunt."""
-    import json
-    data = {}
+    """Парсит вывод GHunt (JSON или текстовый) в словарь полей."""
     try:
         payload = json.loads(raw)
         data = {
@@ -156,9 +191,24 @@ def parse_ghunt(raw: str, email: str) -> dict:
             "uri": payload.get("uri"),
         }
         data = {k: v for k, v in data.items() if v}
+        if data:
+            return data
     except (json.JSONDecodeError, TypeError):
-        return {"raw": raw[:1500]}
-    return data
+        pass
+
+    data: dict[str, str] = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        m = re.match(r"^(Email|Gaia ID|Username|Player ID|Entity Type|Last profile edit)\s*:\s*(.+)$", line)
+        if m:
+            data[_FIELD_NAMES.get(m.group(1), m.group(1))] = m.group(2).strip()
+    if data:
+        return data
+
+    tail = "\n".join(raw.splitlines()[-20:]).strip()
+    if tail:
+        return {"raw": tail[:1500]}
+    return {}
 
 
 def format_email_report(email: str, holehe: dict | None = None,

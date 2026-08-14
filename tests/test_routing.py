@@ -10,7 +10,7 @@ import datetime
 from collections.abc import AsyncGenerator
 
 import pytest
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
 from aiogram.client.session.base import BaseSession
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -142,6 +142,24 @@ async def test_video_document_reaches_photo_handler():
 
 
 @pytest.mark.asyncio
+async def test_photo_outside_state_gets_hint():
+    """Фото без состояния PHOTO раньше молчало — теперь должен быть ответ-подсказка."""
+    await _reset_fsm()
+    session: FakeSession = BOT.session
+    session.calls.clear()
+    await DP.feed_update(
+        BOT,
+        Update(
+            update_id=1,
+            message=_msg(document=Document(file_id="f9", file_unique_id="u9", file_name="x.jpg", mime_type="image/jpeg")),
+        ),
+    )
+    joined = "\n".join(_sent_texts(session))
+    assert joined, "бот проигнорировал фото вне состояния PHOTO"
+    assert "просканировать" in joined or "Извлечь" in joined
+
+
+@pytest.mark.asyncio
 async def test_unexpected_text_in_menu_gets_hint():
     """Вне FSM-состояния обычный текст должен получать подсказку меню."""
     await _reset_fsm()
@@ -150,3 +168,36 @@ async def test_unexpected_text_in_menu_gets_hint():
     await DP.feed_update(BOT, Update(update_id=1, message=_msg(text="привет")))
     joined = "\n".join(_sent_texts(session))
     assert "Используйте меню" in joined, "fallback-подсказка не сработала"
+
+
+@pytest.mark.asyncio
+async def test_handler_error_replies_instead_of_silence():
+    """Упавший хендлер должен отвечать сообщением об ошибке, а не молчать.
+
+    Раньше aiogram молча логировал исключение — пользователь видел тишину.
+    Глобальный errors-хендлер обязан отправлять текст с ошибкой.
+    """
+    from bot.handlers import errors as errors_module
+
+    async def _boom(message: Message) -> None:
+        raise RuntimeError("boom")
+
+    dp = Dispatcher(storage=MemoryStorage())
+    boom_router = Router(name="boom")
+    boom_router.message()(_boom)
+    dp.include_router(boom_router)
+    dp.errors.register(errors_module.on_error)
+
+    bot = Bot(token="1234567890:AA-test-token", session=FakeSession())
+    dp.startup.register(lambda: None)
+
+    try:
+        session: FakeSession = bot.session
+        session.calls.clear()
+        await dp.feed_update(bot, Update(update_id=1, message=_msg(text="x")))
+        joined = "\n".join(_sent_texts(session))
+        assert joined, "бот проигнорировал упавший хендлер (молчание)"
+        assert "Что-то пошло не так" in joined
+        assert "RuntimeError" in joined
+    finally:
+        await bot.session.close()

@@ -7,6 +7,7 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from bot.config import SETTINGS
 from bot.db import DB
 from bot.exceptions import ProbivError, ServiceError, ToolNotConfigured
 from bot.filters import IsAdmin
@@ -19,7 +20,9 @@ from bot.utils.validators import normalize_email, normalize_phone, normalize_use
 
 router = Router(name="input")
 
-NET_TIMEOUT = 60
+# Внешний таймаут должен быть больше внутренних (cli_timeout), чтобы движки
+# успевали сами завершить и убить свои подпроцессы (а не отменяться снаружи).
+NET_TIMEOUT = SETTINGS.cli_timeout + 30
 
 
 async def _safe(fn, *args, note: str) -> tuple:
@@ -34,6 +37,17 @@ async def _safe(fn, *args, note: str) -> tuple:
         return None, f"{note}: {str(exc)}"
     except Exception as exc:  # noqa: BLE001
         return None, f"{note}: {type(exc).__name__}: {str(exc)[:120]}"
+
+
+async def _safe_many(specs: list[tuple[str, object, tuple, str]]) -> dict[str, tuple]:
+    """Запускает движки параллельно. specs: (ключ, функция, args, note).
+
+    Возвращает {ключ: (результат|None, note|None)}. Упавший движок не роняет
+    остальных — это и есть «Всё сразу» без потери всего отчёта.
+    """
+    coros = [_safe(fn, *args, note=note) for _, fn, args, note in specs]
+    outcomes = await asyncio.gather(*coros)
+    return {key: outcome for (key, _, _, _), outcome in zip(specs, outcomes)}
 
 
 async def _send_report(message: Message, builder, target: str, tool: str, category: str):
@@ -87,30 +101,42 @@ def _join_notes(text: str, notes: list[str]) -> str:
 
 async def phone_tool(target: str, tool: str) -> str:
     e164 = normalize_phone(target)
+    specs: list[tuple[str, object, tuple, str]] = [
+        ("info", phone_service.phonenumbers_info, (e164,), "phonenumbers"),
+    ]
+    if tool in ("all", "pinf"):
+        specs.append(("pinf", phone_service.run_phoneinfoga, (e164,), "PhoneInfoga"))
+    if tool in ("all", "tg"):
+        specs.append(("tg", phone_service.check_telegram, (e164,), "Telegram"))
+    if tool in ("all", "ig"):
+        specs.append(("ig", phone_service.run_ignorant, (e164,), "ignorant"))
+
+    out = await _safe_many(specs)
     notes: list[str] = []
-    info, note = await _safe(phone_service.phonenumbers_info, e164, note="phonenumbers")
-    if note:
-        notes.append(note)
+
+    info = out["info"][0] or {}
+    if out["info"][1]:
+        notes.append(out["info"][1])
 
     pinf_lines = None
-    if tool in ("all", "pinf"):
-        raw, note = await _safe(phone_service.run_phoneinfoga, e164, note="PhoneInfoga")
+    if "pinf" in out:
+        raw, note = out["pinf"]
         if note:
             notes.append(note)
         elif raw:
             pinf_lines = phone_service.summarize_phoneinfoga(raw, e164)
 
     phone_telegram = None
-    if tool in ("all", "tg"):
-        res, note = await _safe(phone_service.check_telegram, e164, note="Telegram")
+    if "tg" in out:
+        res, note = out["tg"]
         if note:
             notes.append(note)
         elif res:
             phone_telegram = res
 
     igr_map = None
-    if tool in ("all", "ig"):
-        raw, note = await _safe(phone_service.run_ignorant, e164, note="ignorant")
+    if "ig" in out:
+        raw, note = out["ig"]
         if note:
             notes.append(note)
         elif raw:
@@ -118,7 +144,7 @@ async def phone_tool(target: str, tool: str) -> str:
 
     text = phone_service.format_phone_report(
         e164,
-        info or {},
+        info,
         telegram=phone_telegram,
         phoneinfoga=pinf_lines,
         ignorant=igr_map,
@@ -139,32 +165,40 @@ async def phone_input(message: Message, state: FSMContext) -> None:
 
 async def username_tool(target: str, tool: str) -> str:
     username = normalize_username(target)
-    notes: list[str] = []
-    sherlock_lines = social_dict = snscrape_out = tg_dict = None
-
+    specs: list[tuple[str, object, tuple, str]] = []
     if tool in ("all", "sherlock"):
-        res, note = await _safe(username_service.run_sherlock, username, note="Sherlock")
+        specs.append(("sherlock", username_service.run_sherlock, (username,), "Sherlock"))
+    if tool in ("all", "ss"):
+        specs.append(("ss", username_service.run_socialscan, (f"@{username}",), "socialscan"))
+    if tool in ("all", "snscrape"):
+        specs.append(("snscrape", username_service.run_snscrape, (username,), "snscrape"))
+    if tool in ("all", "tg"):
+        specs.append(("tg", username_service.telegram_user_lookup, (username,), "Telegram"))
+
+    out = await _safe_many(specs)
+    notes: list[str] = []
+
+    sherlock_lines = social_dict = snscrape_out = tg_dict = None
+    if "sherlock" in out:
+        res, note = out["sherlock"]
         if note:
             notes.append(note)
         else:
             sherlock_lines = res
-
-    if tool in ("all", "ss"):
-        raw, note = await _safe(username_service.run_socialscan, f"@{username}", note="socialscan")
+    if "ss" in out:
+        raw, note = out["ss"]
         if note:
             notes.append(note)
         else:
             social_dict = username_service.parse_socialscan(raw)
-
-    if tool in ("all", "snscrape"):
-        raw, note = await _safe(username_service.run_snscrape, username, note="snscrape")
+    if "snscrape" in out:
+        raw, note = out["snscrape"]
         if note:
             notes.append(note)
         else:
             snscrape_out = raw
-
-    if tool in ("all", "tg"):
-        res, note = await _safe(username_service.telegram_user_lookup, username, note="Telegram")
+    if "tg" in out:
+        res, note = out["tg"]
         if note:
             notes.append(note)
         else:
@@ -193,32 +227,40 @@ async def username_input(message: Message, state: FSMContext) -> None:
 
 async def email_tool(target: str, tool: str) -> str:
     email = normalize_email(target)
-    notes: list[str] = []
-    holehe_dict = h8mail_lines = social_dict = ghunt_dict = None
-
+    specs: list[tuple[str, object, tuple, str]] = []
     if tool in ("all", "holehe"):
-        raw, note = await _safe(email_service.run_holehe, email, note="holehe")
+        specs.append(("holehe", email_service.run_holehe, (email,), "holehe"))
+    if tool in ("all", "h8mail"):
+        specs.append(("h8mail", email_service.run_h8mail, (email,), "h8mail"))
+    if tool in ("all", "ss"):
+        specs.append(("ss", username_service.run_socialscan, (email,), "socialscan"))
+    if tool in ("all", "ghunt"):
+        specs.append(("ghunt", email_service.run_ghunt, (email,), "GHunt"))
+
+    out = await _safe_many(specs)
+    notes: list[str] = []
+
+    holehe_dict = h8mail_lines = social_dict = ghunt_dict = None
+    if "holehe" in out:
+        raw, note = out["holehe"]
         if note:
             notes.append(note)
         else:
             holehe_dict = email_service.parse_holehe(raw, email)
-
-    if tool in ("all", "h8mail"):
-        raw, note = await _safe(email_service.run_h8mail, email, note="h8mail")
+    if "h8mail" in out:
+        raw, note = out["h8mail"]
         if note:
             notes.append(note)
         else:
             h8mail_lines = email_service.parse_h8mail(raw, email)
-
-    if tool in ("all", "ss"):
-        raw, note = await _safe(username_service.run_socialscan, email, note="socialscan")
+    if "ss" in out:
+        raw, note = out["ss"]
         if note:
             notes.append(note)
         else:
             social_dict = username_service.parse_socialscan(raw)
-
-    if tool in ("all", "ghunt"):
-        raw, note = await _safe(email_service.run_ghunt, email, note="GHunt")
+    if "ghunt" in out:
+        raw, note = out["ghunt"]
         if note:
             notes.append(note)
         else:

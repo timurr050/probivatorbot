@@ -9,12 +9,11 @@
 """
 from __future__ import annotations
 
-import asyncio
 import re
 
 from bot.config import SETTINGS
 from bot.exceptions import ServiceError, ToolNotConfigured
-from bot.services.base import ensure_binary, run_cli, session_path
+from bot.services.base import ensure_binary, run_cli, run_cli_async, session_path
 
 RESULT_LINK_HINT = "llll: лдн"
 
@@ -139,15 +138,9 @@ async def run_snscrape(username: str) -> str:
     chunks: list[str] = []
     for platform, q in (("Twitter/X", f"twitter-user {username}"), ("Instagram", f"instagram-user {username}")):
         args = [str(binary), *q.split()]
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
         try:
-            raw, _ = await asyncio.wait_for(proc.communicate(), timeout=SETTINGS.cli_timeout)
-            text = raw.decode(SETTINGS.cli_encoding, errors="replace")
-        except asyncio.TimeoutError:
+            text = await run_cli_async(args)
+        except (ServiceError, ToolNotConfigured):
             text = ""
         posts = [l for l in text.splitlines() if l.strip()]
         if posts:

@@ -2,7 +2,7 @@
 
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](https://www.python.org)
 [![aiogram 3](https://img.shields.io/badge/aiogram-3.x-2C8EBB)](https://docs.aiogram.pro)
-[![Tests](https://img.shields.io/badge/tests-75%20passed-green)](tests/)
+[![Tests](https://img.shields.io/badge/tests-78%20passed-green)](tests/)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
 [![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)](.github/workflows/ci-cd.yml)
 
@@ -77,7 +77,7 @@ ProbivBot/
 │       ├── formatting.py       # HTML-экранирование, split длинных сообщений
 │       └── filehelpers.py      # Безопасное скачивание медиа во временные файлы
 │
-└── tests/                      # Pytest-тесты (75 шт., оффлайн)
+└── tests/                      # Pytest-тесты (78 шт., оффлайн)
     ├── test_validators.py
     ├── test_formatting.py
     ├── test_phone_service.py
@@ -352,7 +352,7 @@ HTML-экранирование и `split_message` — режет длинные
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests -q
-# 73 passed
+# 78 passed
 ```
 
 Все тесты оффлайн: валидация, парсеры, EXIF (генерируется через Pillow), GPS-математика,

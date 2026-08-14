@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import Optional
 
@@ -17,8 +16,8 @@ import phonenumbers
 from phonenumbers import carrier, geocoder, timezone
 
 from bot.config import SETTINGS
-from bot.exceptions import ServiceError, ToolNotConfigured
-from bot.services.base import avatar_path, ensure_binary, run_cli, session_path
+from bot.exceptions import ExternalToolError, ServiceError, ToolNotConfigured, ToolTimeout
+from bot.services.base import avatar_path, ensure_binary, run_cli_async, session_path
 
 # удаляем спецсимволы для CLI-инструментов, оставив цифровой формат
 _DIGITS_RE = re.compile(r"[^\d]")
@@ -93,7 +92,7 @@ def _phoneinfoga_command() -> tuple[str, ...]:
     return tuple(str(binary).split())
 
 
-def run_phoneinfoga(e164: str) -> str:
+async def run_phoneinfoga(e164: str) -> str:
     """Запускает PhoneInfoga и возвращает сырой отчёт."""
     base = _phoneinfoga_command()
     args = list(base) + ["scan", "-n", e164]
@@ -101,39 +100,110 @@ def run_phoneinfoga(e164: str) -> str:
         args = [*base, "--api-key", SETTINGS.phoneinfoga_api_key,
                 "--name", "other", "scan", "-n", e164]
     try:
-        return run_cli(args)
+        return await run_cli_async(args)
     except ServiceError:
         # падаем на legacy-режим для старых версий PhoneInfoga
         try:
-            return run_cli([*base, "number", e164])
+            return await run_cli_async([*base, "number", e164])
         except ServiceError:
             raise
 
 
+_PINFOGA_SECTIONS = {
+    "Social media": "👤 Соцсети",
+    "Disposable providers": "📨 Одноразовые SMS-сервисы",
+    "Reputation": "⭐ Репутация / отзывы",
+    "Individuals": "🧑 Персональные данные",
+    "General": "📄 Общий поиск",
+}
+
+_MAX_LINKS_PER_SECTION = 5
+
+
+def _link_domain(url: str) -> str:
+    """Вытаскивает короткое имя сайта из поискового URL PhoneInfoga."""
+    m = re.search(
+        r"site%3A([a-z0-9.-]+(?:\.(?:com|ru|net|org|me|io|info|de|ca|ie|us|uk|in|"
+        r"online|live|now|co|top|xyz|plus|app|eu|nl|cz|pl|by|ua|kz|es|it|fr|[a-z]{2})))",
+        url,
+        re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).removeprefix("www.")
+    m2 = re.search(r"https?://([^/?#]+)", url)
+    if m2:
+        return m2.group(1).removeprefix("www.")
+    return ""
+
+
 def summarize_phoneinfoga(raw: str, e164: str) -> list[str]:
-    """Вытаскивает пригодные для показа строчки из вывода PhoneInfoga."""
-    out = _fragment_lines(raw)
-    if not out:
-        return []
-    return out[:60]
+    """Разбирает вывод PhoneInfoga в чистые русские строки.
 
+    Ссылки группируются по категориям (соцсети, одноразовые SMS, репутация,
+    персональные данные, общий поиск), заголовки переводятся, дубликаты
+    убираются, количество ссылок в каждой категории ограничено — вместо
+    нечитабельной простыни на английском.
+    """
+    sections: dict[str, list[str]] = {}
+    info: dict[str, str] = {}
+    succeeded: str | None = None
+    current: str | None = None
 
-def _fragment_lines(raw: str) -> list[str]:
-    lines: list[str] = []
     for line in raw.splitlines():
         line = line.strip()
-        if not line or line.startswith(("[", "We are", "Started", "Running")):
+        if not line:
             continue
-        lines.append(line)
-    # обрезаем повторяющийся прогресс
-    seen: set[str] = set()
-    unique: list[str] = []
-    for line in lines:
-        norm = re.sub(r"\s+", " ", line)[:80]
-        if norm not in seen:
-            seen.add(norm)
-            unique.append(line)
-    return unique
+        if line.startswith("Results for"):
+            current = None
+            continue
+        # заголовки категорий ("Social media:", "Disposable providers:"…)
+        if (line.endswith(":") and len(line) < 45
+                and not line.startswith(("URL", "http", "time="))):
+            candidate = line[:-1].strip()
+            if candidate in _PINFOGA_SECTIONS:
+                current = candidate
+                continue
+        if current and (line.startswith("URL:") or line.startswith("http")):
+            url = line[4:].strip() if line.startswith("URL:") else line
+            if url.startswith("http"):
+                bucket = sections.setdefault(current, [])
+                if url not in bucket:
+                    bucket.append(url)
+            continue
+        m = re.match(r"^([A-Za-z][\w .-]+):\s*(.+)$", line)
+        if m and not line.startswith(("time=", "level=")):
+            info[m.group(1).strip()] = m.group(2).strip()
+            continue
+        m = re.search(r"(\d+) scanner\(s\) succeeded", line)
+        if m:
+            succeeded = m.group(1)
+
+    if not sections and not info:
+        return []
+
+    out: list[str] = []
+    for section, urls in sections.items():
+        label = _PINFOGA_SECTIONS.get(section, section)
+        shown = urls[:_MAX_LINKS_PER_SECTION]
+        links = []
+        for url in shown:
+            site = _link_domain(url)
+            links.append(f'<a href="{url}">{site or "ссылка"}</a>')
+        extra = f" (+ещё {len(urls) - len(shown)})" if len(urls) > len(shown) else ""
+        out.append(f"{label} ({len(urls)}): " + " · ".join(links) + extra)
+
+    if info.get("Country"):
+        out.append(f"🌍 Страна: <code>{info['Country']}</code>")
+    if info.get("Local") or info.get("Raw local"):
+        out.append(f"📞 Местный формат: <code>{info.get('Local') or info.get('Raw local')}</code>")
+    if info.get("Carrier"):
+        out.append(f"🏢 Оператор: <code>{info['Carrier']}</code>")
+    if info.get("E164"):
+        out.append(f"📟 E164: <code>{info['E164']}</code>")
+    if succeeded:
+        out.append(f"✅ Сканеров выполнено: {succeeded}")
+
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -225,29 +295,19 @@ async def _maybe_avatar_photo(client, user) -> Optional[str]:
 
 async def run_ignorant(e164: str) -> str:
     """Ищет номер в соцсетях через CLI ignorant."""
-    args = "ignorant"
     try:
-        binary = ensure_binary(None, args)
-        proc = await asyncio.create_subprocess_exec(
-            str(binary),
-            "--phone",
-            _digits(e164),
-            "--only-used",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        raw, _ = await asyncio.wait_for(proc.communicate(), timeout=SETTINGS.cli_timeout)
-        text = raw.decode(SETTINGS.cli_encoding, errors="replace")
-        status = await proc.wait()
-        if status != 0 and not text.strip():
-            return ""
-        return text
-    except asyncio.TimeoutError:
-        return ""
-    except (FileNotFoundError, ToolNotConfigured):
+        binary = ensure_binary(None, "ignorant")
+    except ToolNotConfigured:
         raise ToolNotConfigured(
             "ignorant не установлен.\n<code>pip install ignorant</code>"
         )
+    try:
+        return await run_cli_async(
+            [str(binary), "--phone", _digits(e164), "--only-used"],
+            timeout=SETTINGS.cli_timeout,
+        )
+    except (ToolTimeout, ExternalToolError, ServiceError):
+        return ""
 
 
 def parse_ignorant(raw: str, e164: str) -> dict:
