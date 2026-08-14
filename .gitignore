@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Конфиденциальное
+.env
+
+# Сессии и временные файлы
+data/
+*.session
+*.session-journal
+tg_avatar.jpg
+
+# Локальный бинарник PhoneInfoga (Windows) и исходники для его сборки
+# (на сервере в Docker бинарник скачивается сам — см. Dockerfile)
+tools/phoneinfoga.exe
+tools/phoneinfoga-src/
+
+# IDE
+.idea/
+.vscode/

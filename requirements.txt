@@ -1,0 +1,21 @@
+# ===== Ядро =====
+aiogram>=3.13,<4.0            # Telegram Bot API (asyncio)
+python-dotenv>=1.0            # чтение .env
+aiohttp>=3.9                  # HTTP для aiogram / Telegram Bot API
+
+# ===== OSINT-движки =====
+phonenumbers>=8.13            # разбор и валидация телефонных номеров (libphonenumber)
+telethon>=1.36                # MTProto клиент Telegram (проверка номера, получение инфы по нику)
+exifread>=3.0                 # чтение EXIF-метаданных
+Pillow>=10.0                  # анализ изображений (размер, DPI, доп. метаданные)
+socialscan>=2.0               # проверка доступности email/username/телефона на сервисах
+holehe>=1.61                  # проверка регистрации email на сайтах
+h8mail>=2.5                   # поиск email в утечках (требует конфиг h8mail)
+sherlock-project>=0.16        # поиск username по 400+ сайтам (CLI sherlock)
+ignorant>=1.2                 # поиск телефона по соцсетям
+ghunt>=2.0                    # разведка по аккаунту Google (GHunt)
+snscrape>=0.7                 # сбор постов Twitter/X и Instagram
+geopy>=2.4                    # обратное геокодирование координат GPS (опционально)
+
+# ===== Тесты / разработка =====
+pytest>=8.0

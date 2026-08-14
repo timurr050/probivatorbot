@@ -1,0 +1,35 @@
+services:
+  probivbot:
+    build:
+      context: .
+    image: probivbot:latest
+    # container_name НЕ указываем — он блокирует docker compose up --scale (реплики)
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # В контейнере PhoneInfoga лежит в /usr/local/bin (скачан в Dockerfile).
+      # Перекрывает значение из .env (например, Windows-путь).
+      - PHONEINFOGA_PATH=/usr/local/bin/phoneinfoga
+      - CLI_ENCODING=utf-8
+      # Опционально: прогнать тесты перед стартом бота.
+      - RUN_TESTS_ON_START=false
+    ports:
+      # healthcheck и webhook-режим слушают порт 8080 внутри контейнера
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    volumes:
+      # База SQLite (/history, /stats) и сессии Telethon хранятся на хосте
+      - ./data:/app/data
+      # Прокидываем .env внутрь, чтобы dotenv тоже видел настройки
+      - ./.env:/app/.env:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

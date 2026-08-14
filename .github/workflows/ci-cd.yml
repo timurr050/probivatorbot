@@ -1,0 +1,74 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # ---- 1. Тесты: собираем образ и гоняем pytest внутри него ----
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t probivbot:test .
+
+      - name: Run tests inside container
+        run: |
+          docker run --rm -e BOT_TOKEN=1234567890:AA-test probivbot:test \
+            python -m pytest tests -q
+
+  # ---- 2. Деплой на сервер (SSH по паролю) ----
+  deploy:
+    name: Deploy to server
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy app to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: ${{ secrets.SERVER_PORT }}
+          source: "bot/,tests/,main.py,requirements.txt,Dockerfile,docker-compose.yml,entrypoint.sh,.env.example,deploy/"
+          target: "/opt/probivbot"
+          strip_components: 0
+
+      - name: Deploy (build + up)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: ${{ secrets.SERVER_PORT }}
+          envs: APP_ENV
+          script: |
+            set -e
+            cd /opt/probivbot
+
+            # Docker и Compose plugin, если их ещё нет
+            if ! command -v docker >/dev/null 2>&1; then
+              echo ">> Устанавливаю Docker..."
+              apt-get update -y
+              apt-get install -y docker.io docker-compose-plugin
+              systemctl enable --now docker || true
+            fi
+
+            # .env на сервере берётся из GitHub-секрета APP_ENV
+            echo "$APP_ENV" > .env
+
+            echo ">> Пересобираю и поднимаю бота..."
+            docker compose down --remove-orphans || true
+            docker compose up -d --build
+
+            echo ">> Готово. Логи: docker compose logs -f"
+        env:
+          APP_ENV: ${{ secrets.APP_ENV }}
