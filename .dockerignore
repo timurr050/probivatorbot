@@ -13,9 +13,6 @@ tools
 tg_avatar.jpg
 README.md
 .github
-Dockerfile
-docker-compose.yml
-entrypoint.sh
 .dockerignore
 .gitignore
 deploy
