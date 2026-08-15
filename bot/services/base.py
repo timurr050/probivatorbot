@@ -100,7 +100,7 @@ def run_cli(args: Sequence[str], timeout: int | None = None) -> str:
 
 
 async def run_cli_async(args: Sequence[str], timeout: int | None = None,
-                        env: dict | None = None) -> str:
+                        env: dict | None = None, cwd: str | Path | None = None) -> str:
     """Запускает CLI-команду асинхронно, гарантированно убивая процесс по таймауту.
 
     В отличие от `run_cli`, процесс при превышении таймаута завершается
@@ -116,6 +116,7 @@ async def run_cli_async(args: Sequence[str], timeout: int | None = None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=env,
+            cwd=str(cwd) if cwd is not None else None,
         )
     except FileNotFoundError as exc:
         raise ToolNotConfigured(f"Не удалось запустить: {args[0]}") from exc

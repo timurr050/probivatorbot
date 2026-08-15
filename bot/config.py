@@ -46,6 +46,10 @@ class Settings:
     # Sherlock
     sherlock_officially_verified: bool = False
 
+    # Проверка аккаунтов в соцсетях: какие сервисы включать (через запятую).
+    # Пусто = все. Доступно: instagram, tiktok, vk, whatsapp, telegram, github
+    reg_services: tuple[str, ...] = ()
+
     # Webhook (вместо long-polling) — нужен для нескольких реплик
     webhook_domain: Optional[str] = None
     webhook_path: Optional[str] = None
@@ -115,6 +119,10 @@ def load_settings() -> Settings:
         ghunt_config_path=os.getenv("GHUNT_CONFIG_PATH") or None,
         sherlock_officially_verified=_env_bool(
             os.getenv("SHERLOCK_OFFICIALLY_VERIFIED")
+        ),
+        reg_services=tuple(
+            s.strip().lower() for s in (os.getenv("REG_SERVICES") or "").split(",")
+            if s.strip()
         ),
         webhook_domain=os.getenv("WEBHOOK_DOMAIN") or None,
         webhook_path=os.getenv("WEBHOOK_PATH") or None,

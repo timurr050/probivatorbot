@@ -20,21 +20,24 @@ CATEGORY_BUTTONS = {
 
 TOOLS = {
     "phone": [
-        ("all", "🚀 Всё сразу"),
+        ("all", "🚀 Всё сразу (авто)"),
+        ("reg", "🪪 Аккаунты в сервисах"),
         ("ph", "📇 phonenumbers"),
         ("pinf", "🔍 PhoneInfoga"),
         ("tg", "✈️ Telegram"),
         ("ig", "🌐 ignorant"),
     ],
     "username": [
-        ("all", "🚀 Всё сразу"),
+        ("all", "🚀 Всё сразу (авто)"),
+        ("maigret", "🕵️ Maigret (3000+ сайтов)"),
         ("sherlock", "🕵️ Sherlock"),
         ("ss", "🕸 socialscan"),
         ("snscrape", "📰 snscrape"),
         ("tg", "✈️ Telegram"),
     ],
     "email": [
-        ("all", "🚀 Всё сразу"),
+        ("all", "🚀 Всё сразу (авто)"),
+        ("reg", "🪪 Аккаунты в сервисах"),
         ("holehe", "🔎 holehe"),
         ("h8mail", "💥 h8mail"),
         ("ss", "🕸 socialscan"),
@@ -68,9 +71,10 @@ def main_menu() -> InlineKeyboardMarkup:
     kb.button(text="📧 Email", callback_data="cat:email")
     kb.button(text="🖼 Фото / EXIF", callback_data="cat:photo")
     kb.button(text="🔮 Google (GHunt)", callback_data="cat:google")
+    kb.button(text="🔑 Ключи API", callback_data="cmd:keys")
     kb.button(text="📐 Форматы ввода", callback_data="cmd:formats")
     kb.button(text="❓ Помощь", callback_data="cmd:help")
-    kb.adjust(2, 2, 2, 1)
+    kb.adjust(2, 2, 2, 2)
     return kb.as_markup()
 
 
@@ -83,12 +87,26 @@ def tools_menu(category: str) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def after_result_menu(category: str, tool: str) -> InlineKeyboardMarkup:
+def engine_menu(category: str) -> InlineKeyboardMarkup:
+    """Меню после выбора категории: автопробив по умолчанию + выбор движка."""
     kb = InlineKeyboardBuilder()
-    kb.button(text="🔄 Повторить", callback_data=f"tool:{category}:{tool}")
+    kb.button(text="⚙️ Выбрать движок", callback_data=f"toolmenu:{category}")
+    kb.button(text="🏠 Главное меню", callback_data="cmd:menu")
+    kb.adjust(2)
+    return kb.as_markup()
+
+
+def after_result_menu(category: str, tool: str) -> InlineKeyboardMarkup:
+    """Кнопки после отчёта: повторить (по той же цели, без ввода), ТГ-поиск, ключи."""
+    kb = InlineKeyboardBuilder()
+    if category in ("phone", "username", "email"):
+        kb.button(text="🔄 Повторить (все движки)", callback_data=f"retool:{category}:all")
+        if category == "username":
+            kb.button(text="✈️ Искать аккаунт в ТГ", callback_data="retool:username:tg")
+    kb.button(text="🔑 Ключи API", callback_data="cmd:keys")
     kb.button(text="⬅️ Меню движков", callback_data=f"cat:{category}")
     kb.button(text="🏠 Главное меню", callback_data="cmd:menu")
-    kb.adjust(1, 2)
+    kb.adjust(1, 1, 2)
     return kb.as_markup()
 
 

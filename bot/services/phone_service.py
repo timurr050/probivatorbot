@@ -37,11 +37,11 @@ _NUMBER_TYPES = {
     phonenumbers.PhoneNumberType.FIXED_LINE_OR_MOBILE: "Городской/Мобильный",
     phonenumbers.PhoneNumberType.TOLL_FREE: "Бесплатный (800)",
     phonenumbers.PhoneNumberType.PREMIUM_RATE: "Платный (Premium)",
-    phonenumbers.PhoneNumberType.SHARED_COST: "Shared cost",
-    phonenumbers.PhoneNumberType.VOIP: "VoIP",
+    phonenumbers.PhoneNumberType.SHARED_COST: "С раздельной оплатой",
+    phonenumbers.PhoneNumberType.VOIP: "IP-телефония",
     phonenumbers.PhoneNumberType.PERSONAL_NUMBER: "Личный",
     phonenumbers.PhoneNumberType.PAGER: "Пейджер",
-    phonenumbers.PhoneNumberType.UAN: "UAN",
+    phonenumbers.PhoneNumberType.UAN: "Универсальный (UAN)",
     phonenumbers.PhoneNumberType.VOICEMAIL: "Голосовая почта",
     phonenumbers.PhoneNumberType.UNKNOWN: "Неизвестный",
 }
@@ -213,39 +213,13 @@ def summarize_phoneinfoga(raw: str, e164: str) -> list[str]:
 async def check_telegram(e164: str) -> dict:
     """Проверяет, зарегистрирован ли номер в Telegram.
 
-    Возвращает {'registered': bool, 'username': str|None, 'first_name': str|None, 'last_name': str|None, 'bot': bool, 'photo': str|None}
+    Перебирает ВСЕ сессии из TG_ACCOUNTS по очереди — первая авторизованная,
+    которая смогла ответить, и есть результат. Возвращает
+    {'registered': bool, 'username': ..., 'photo': ...}.
     """
-    if not SETTINGS.is_telethon_ready:
-        raise ToolNotConfigured(
-            "Telethon не настроен.\nДобавьте в .env:\n"
-            "<code>TG_API_ID</code> и <code>TG_API_HASH</code> (https://my.telegram.org/apps)\n"
-            "и пару <code>phone</code>:<code>session_file</code> в <code>TG_ACCOUNTS</code>"
-        )
+    from bot.services.telethon_lookup import for_each_session
 
-    from telethon import TelegramClient
-    from telethon.errors import UsernameNotOccupiedError  # noqa: F401
-
-    accounts = SETTINGS.tg_accounts
-    if not accounts:
-        raise ToolNotConfigured(
-            "Не заданы Telegram-аккаунты (<code>TG_ACCOUNTS</code> в .env).\n"
-            'Пример: {"+375291234567": "sess_1"}'
-        )
-
-    phone = next(iter(accounts), None)
-    session_name = accounts[phone] if phone else "anon"
-
-    client = TelegramClient(
-        session_path(session_name),
-        api_id=SETTINGS.tg_api_id,
-        api_hash=SETTINGS.tg_api_hash,
-    )
-    try:
-        await client.connect()
-        if not await client.is_user_authorized():
-            return {"registered": None, "hint": "Сессия не авторизована (нужен вход по коду)"}
-
-        me = await client.get_me()
+    async def _lookup(client, phone):
         try:
             entity = await client.get_input_entity(e164)
         except (ValueError, TypeError):
@@ -275,8 +249,11 @@ async def check_telegram(e164: str) -> dict:
         # подтягиваем фото для аватара, если оно есть
         result["photo"] = await _maybe_avatar_photo(client, user)
         return result
-    finally:
-        await client.disconnect()
+
+    result, hints = await for_each_session(_lookup)
+    if result:
+        return result
+    return {"registered": None, "hint": "; ".join(hints) or "нет сессий"}
 
 
 async def _maybe_avatar_photo(client, user) -> Optional[str]:
@@ -330,8 +307,11 @@ def parse_ignorant(raw: str, e164: str) -> dict:
 
 def format_phone_report(e164: str, info: dict, telegram: dict | None = None,
                         phoneinfoga: list[str] | None = None,
-                        ignorant: dict | None = None) -> str:
+                        ignorant: dict | None = None,
+                        registrations: list[dict] | None = None) -> str:
     """Собирает итоговый текстовый отчёт по номеру."""
+    from bot.services.registration_service import format_registrations_section
+
     lines: list[str] = []
     add = lines.append
     add("<b>📱 ОТЧЁТ ПО НОМЕРУ</b>\n")
@@ -364,12 +344,12 @@ def format_phone_report(e164: str, info: dict, telegram: dict | None = None,
         add("<b>✈️ Telegram</b>")
         if telegram.get("registered") is True:
             add(f"│ Статус: <b>НАЙДЕН ⭕</b>")
-            add(f"│ Username: <code>@{str(telegram.get('username', ''))}</code>" if telegram.get("username") else "│ Username: —")
+            add(f"│ Ник: <code>@{str(telegram.get('username', ''))}</code>" if telegram.get("username") else "│ Ник: —")
             add(f"│ Имя: <blockquote>{str(telegram.get('first_name') or '—')} {str(telegram.get('last_name') or '')}</blockquote>")
             add(f"│ Бот: <code>{'да' if telegram.get('bot') else 'нет'}</code>")
             add(f"│ Premium: <code>{'да' if telegram.get('premium') else 'нет'}</code>")
         elif telegram.get("registered") is False:
-            add(f"│ Статус: <b>ИЗВЕСТЕН ✖️ (не в TG)</b>")
+            add(f"│ Статус: <b>не найден в Telegram</b>")
         else:
             add(f"│ {str(telegram.get('hint', 'нет данных'))}")
         add("")
@@ -384,6 +364,10 @@ def format_phone_report(e164: str, info: dict, telegram: dict | None = None,
                 add(f"│ <b>{str(k)}</b> → {str(ignorant[k])}")
         if missing:
             add(f"│ Не найдено: {', '.join(str(k) for k in missing[:10])}")
+        add("")
+
+    if registrations:
+        add("\n".join(format_registrations_section(registrations)))
         add("")
 
     add("⚡ Данные из открытых источников. Используйте только в законных целях.")

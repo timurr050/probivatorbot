@@ -12,6 +12,7 @@ from bot.keyboards import (
     CATEGORY_FORMATS,
     CATEGORY_PROMPT_HINTS,
     TOOLS,
+    engine_menu,
     main_menu,
     simple_menu,
     tools_menu,
@@ -21,6 +22,7 @@ from bot.texts import (
     ABOUT_TEXT,
     FORMATS_TEXT,
     HELP_TEXT,
+    KEYS_TEXT,
     NOT_ADMIN_TEXT,
     PROMPT_TEXT,
     START_TEXT,
@@ -33,6 +35,7 @@ _CMD_DESC = {
     "menu": ("🏠 Главное меню", main_menu),
     "help": ("❓ Помощь", None),
     "formats": ("📐 Форматы ввода", None),
+    "keys": ("🔑 Ключи API", None),
     "about": ("ℹ️ О боте", None),
 }
 
@@ -116,16 +119,62 @@ async def _run_cmd(message: Message | None, cmd: str) -> None:
             text = HELP_TEXT
         elif cmd == "formats":
             text = FORMATS_TEXT
+        elif cmd == "keys":
+            text = KEYS_TEXT
         elif cmd == "about":
             text = ABOUT_TEXT
         kb = kb_maker() if kb_maker else None
         await message.answer(text, reply_markup=kb)
 
 
+_STATE_BY_CATEGORY = {
+    "phone": ProbivStates.PHONE,
+    "username": ProbivStates.USERNAME,
+    "email": ProbivStates.EMAIL,
+    "photo": ProbivStates.PHOTO,
+    "google": ProbivStates.GOOGLE,
+}
+
+
 @router.callback_query(IsAdmin(), F.data.startswith("cat:"))
-async def on_cat_callback(call: CallbackQuery) -> None:
+async def on_cat_callback(call: CallbackQuery, state: FSMContext) -> None:
+    """Категория → сразу автопробив по ВСЕМ движкам (без выбора движка).
+
+    Пользователь просто отправляет цель — бот сам запускает все движки
+    и собирает результат в один отчёт. Точечный выбор движков доступен
+    кнопкой «⚙️ Выбрать движок».
+    """
     category = call.data.split(":", 1)[1]
-    text = f"<b>{_cat_emoji(category)} {_cat_label(category)}</b>\nВыберите движок:"
+    await state.set_state(_STATE_BY_CATEGORY.get(category, ProbivStates.MENU))
+    await state.update_data(tool="all", category=category)
+
+    hint = CATEGORY_FORMATS.get(category, "")
+    prompt = PROMPT_TEXT.format(
+        label=CATEGORY_PROMPT_HINTS.get(category, category),
+        hint=hint,
+    )
+    text = (
+        f"🚀 <b>Автопробив: {_cat_emoji(category)} {_cat_label(category)}</b>\n\n"
+        f"{prompt}\n\n"
+        "Запустятся <b>все</b> движки сразу (включая новые: maigret, "
+        "проверку аккаунтов в сервисах через curl_cffi), результат придёт "
+        "одним отчётом."
+    )
+    await call.message.edit_text(text, reply_markup=engine_menu(category))
+    try:
+        await call.answer()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@router.callback_query(IsAdmin(), F.data.startswith("toolmenu:"))
+async def on_toolmenu_callback(call: CallbackQuery) -> None:
+    """Открывает меню конкретных движков категории."""
+    category = call.data.split(":", 1)[1]
+    text = (
+        f"<b>{_cat_emoji(category)} {_cat_label(category)}</b>\n"
+        "Выберите конкретный движок (или «Всё сразу»):"
+    )
     await call.message.edit_text(text, reply_markup=tools_menu(category))
     try:
         await call.answer()
@@ -136,13 +185,7 @@ async def on_cat_callback(call: CallbackQuery) -> None:
 @router.callback_query(IsAdmin(), F.data.startswith("tool:"))
 async def on_tool_callback(call: CallbackQuery, state: FSMContext) -> None:
     _, category, tool = call.data.split(":", 2)
-    _state = {
-        "phone": ProbivStates.PHONE,
-        "username": ProbivStates.USERNAME,
-        "email": ProbivStates.EMAIL,
-        "photo": ProbivStates.PHOTO,
-        "google": ProbivStates.GOOGLE,
-    }.get(category, ProbivStates.MENU)
+    _state = _STATE_BY_CATEGORY.get(category, ProbivStates.MENU)
     await state.set_state(_state)
     await state.update_data(tool=tool, category=category)
 

@@ -6,7 +6,7 @@
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
 [![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)](.github/workflows/ci-cd.yml)
 
-Телеграм-бот для сбора данных из **открытых** источников. Объединяет 12 OSINT-движков под
+Телеграм-бот для сбора данных из **открытых** источников. Объединяет 15 OSINT-движков под
 одним интерфейсом: ответы приходят **в виде ответа-цитирования** на ваше сообщение.
 
 > ⚠️ **Юридический дисклеймер.** Бот работает только с публично доступными данными и
@@ -67,6 +67,8 @@ ProbivBot/
 │   │   ├── base.py             # run_cli(), ensure_binary(), пути сессий
 │   │   ├── phone_service.py    # phonenumbers + PhoneInfoga + Telethon + ignorant
 │   │   ├── username_service.py # sherlock + socialscan + snscrape + Telethon
+│   │   ├── maigret_service.py  # maigret — никнейм на 3000+ сайтах (HTTP+регэкспы)
+│   │   ├── registration_service.py # curl_cffi — есть ли аккаунт в ВК/IG/TikTok/WA/TG/GitHub
 │   │   ├── email_service.py    # holehe + h8mail + socialscan + GHunt
 │   │   ├── photo_service.py    # exifread + Pillow + GPS + геокодирование
 │   │   ├── video_service.py    # парсер MP4/MOV: атомы, ilst, ©xyz-GPS, геокодирование
@@ -107,7 +109,7 @@ ProbivBot/
         │                  │                  │
    handlers/           services/          utils/
    ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-   │ ФСМ + меню       │ │ 12 OSINT-движков│ │ валидаторы      │
+   │ ФСМ + меню       │ │ 15 OSINT-движков│ │ валидаторы      │
    │ common           │ │ phone_service   │ │ validators.py   │
    │ input_handlers   │ │ username_service│ │ formatting.py   │
    │ photo            │ │ email_service   │ │ filehelpers.py  │
@@ -265,7 +267,9 @@ Copy-Item .env.example .env
 | `ignorant` | Поиск номера по соцсетям | `pip install ignorant` (https://github.com/megadose/ignorant) | Кнопка пропускается с пометкой |
 | `sherlock` | Никнейм на 400+ сайтах | `pip install sherlock-project` (https://github.com/sherlock-project/sherlock) | Кнопка пропускается с пометкой |
 | `socialscan` | Проверка email/username/телефона на соцсетях | `pip install socialscan` (https://github.com/iojw/socialscan) | Кнопка пропускается с пометкой |
-| `snscrape` | Последние посты username в X и Instagram | `pip install snscrape` (https://github.com/JustAnotherArchivist/snscrape) | Кнопка пропускается с пометкой |
+| `snscrape` | Последние посты username в X, Instagram, Reddit, Telegram | `pip install snscrape` (https://github.com/JustAnotherArchivist/snscrape) | Кнопка пропускается с пометкой |
+| `maigret` | Никнейм на 3000+ сайтах (прямые HTTP-запросы + регулярки, без ключей) | `pip install maigret` (https://github.com/soxoj/maigret) | Кнопка пропускается с пометкой |
+| `curl-cffi` | Проверка «есть ли аккаунт» по email/телефону в ВК/Instagram/TikTok/WhatsApp/Telegram/GitHub (подмена TLS-отпечатка JA3/JA4 — обход Cloudflare) | `pip install curl-cffi` (https://github.com/lexiforest/curl_cffi) | Секция «🪪 Аккаунты в популярных сервисах» пропускается |
 | `exifread` + Pillow | Максимум метаданных фото: EXIF, GPS, MakerNote, DPI, ICC | `pip install exifread Pillow` | Фото-анализ недоступен |
 | `video_service` (чистый Python) | Метаданные видео MP4/MOV: даты, длительность, дорожки, ilst (©mak/©mod/©day/©xyz), GPS → адрес (без ffprobe) | входит в проект | Видео-анализ недоступен |
 | `holehe` | Регистрация email на 120+ сайтах | `pip install holehe` (https://github.com/megadose/holehe) | Кнопка пропускается с пометкой |
@@ -323,8 +327,20 @@ Copy-Item .env.example .env
 
 ### `bot/services/username_service.py`
 - `run_sherlock(username)` → найденные URL; `run_socialscan`, `parse_socialscan`.
-- `run_snscrape(username)` → последние посты X/Instagram.
+- `run_snscrape(username)` → последние посты X/Instagram/Reddit/Telegram.
 - `telegram_user_lookup(username)` → данные TG-аккаунта (ID, флаги, телефон если виден).
+
+### `bot/services/maigret_service.py`
+- `run_maigret(username)` → CLI `python -m maigret` (utf-8, `--dns-resolver threaded`,
+  запуск во временной папке); `parse_maigret(raw)` → `{found, count, tags}`;
+  `format_maigret_section(...)` → секция «🕵️ Maigret».
+
+### `bot/services/registration_service.py`
+- `check_registrations(target, 'email'|'phone')` → есть ли аккаунт в популярных
+  сервисах (ВК, Instagram, TikTok, WhatsApp, Telegram, GitHub) через curl_cffi
+  (метод «восстановление пароля/форма регистрации», подмена TLS-отпечатка);
+  `format_registrations_section(...)` → секция «🪪 Аккаунты в популярных сервисах».
+  Результат честный: ✅ найден / ❌ не найден / ⚠️ не удалось проверить.
 
 ### `bot/services/email_service.py`
 - `run_holehe / parse_holehe`, `run_h8mail / parse_h8mail`, `run_ghunt / parse_ghunt`.

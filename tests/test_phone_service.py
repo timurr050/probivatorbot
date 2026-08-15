@@ -46,11 +46,16 @@ def test_format_phone_report_full():
         telegram={"registered": False},
         phoneinfoga=["Country: Belarus", "Carrier: A1"],
         ignorant={"Instagram": "Not found", "VK": "Found"},
+        registrations=[
+            {"key": "whatsapp", "label": "WhatsApp", "emoji": "💬", "found": True, "url": ""},
+        ],
     )
     assert "ОТЧЁТ ПО НОМЕРУ" in text
-    assert "ИЗВЕСТЕН" in text
+    assert "не найден в Telegram" in text
     assert "PhoneInfoga" in text
     assert "Instagram" in text
+    assert "Аккаунты в популярных сервисах" in text
+    assert "WhatsApp" in text
 
 
 def test_parse_ignorant_sample():

@@ -6,8 +6,13 @@ from __future__ import annotations
 
 import pytest
 
-from bot.handlers.common import on_cat_callback, on_cmd_callback, on_tool_callback
-from bot.keyboards import after_result_menu, main_menu, tools_menu
+from bot.handlers.common import (
+    on_cat_callback,
+    on_cmd_callback,
+    on_tool_callback,
+    on_toolmenu_callback,
+)
+from bot.keyboards import after_result_menu, engine_menu, main_menu, tools_menu
 
 
 class FakeCall:
@@ -80,17 +85,35 @@ class TestCallbackCoverage:
             for data in self._collect(tools_menu(cat)):
                 assert data.startswith(("tool:", "cmd:")), data
 
+    def test_engine_menu_callbacks_covered(self):
+        for cat in ("phone", "username", "email", "photo", "google"):
+            for data in self._collect(engine_menu(cat)):
+                assert data.startswith(("toolmenu:", "cmd:")), data
+
     def test_after_result_callbacks_covered(self):
         for data in self._collect(after_result_menu("phone", "all")):
-            assert data.startswith(("tool:", "cat:", "cmd:")), data
+            assert data.startswith(("retool:", "cat:", "cmd:")), data
 
 
 class TestNavigation:
     @pytest.mark.asyncio
-    async def test_cat_opens_tools_menu(self):
+    async def test_cat_starts_autoprobiv(self):
+        """Категория сразу запускает автопробив по всем движкам (без выбора)."""
         call = FakeCall("cat:phone")
-        await on_cat_callback(call)
-        assert "Выберите движок" in call.message.edited_text
+        fake_state = FakeState()
+        await on_cat_callback(call, fake_state)
+        assert "Автопробив" in call.message.edited_text
+        assert "все" in call.message.edited_text.lower()
+        assert fake_state.state is not None
+        assert fake_state.data.get("tool") == "all"
+        assert fake_state.data.get("category") == "phone"
+        assert call.message.edited_kb is not None
+
+    @pytest.mark.asyncio
+    async def test_toolmenu_opens_tools(self):
+        call = FakeCall("toolmenu:phone")
+        await on_toolmenu_callback(call)
+        assert "Выберите конкретный движок" in call.message.edited_text
         assert call.message.edited_kb is not None
 
     @pytest.mark.asyncio

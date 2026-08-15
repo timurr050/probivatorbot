@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from bot.services.email_service import format_email_report, parse_ghunt, run_ghunt
+from bot.utils.formatting import esc
 
 __all__ = ["analyze_google", "format_google_report"]
 
@@ -14,7 +15,7 @@ async def analyze_google(email: str) -> str:
     lines: list[str] = []
     add = lines.append
     add("<b>🔮 GHUNT · РАЗВЕДКА GOOGLE</b>")
-    add(f"└ <code>{str(email)}</code>")
+    add(f"<blockquote>{esc(str(email))}</blockquote>")
     add("")
 
     if "raw" in data:
@@ -39,7 +40,8 @@ async def analyze_google(email: str) -> str:
 
     if "Запустите" not in raw and "ghunt" in raw.lower():
         add("")
-        add("⚠️ GHunt может требовать авторизации:\n<code>ghunt check</code> (один раз)")
+        add("⚠️ GHunt может требовать авторизации.\n"
+            "Подробная настройка (где лежит токен) — в <code>/help</code> → «GHunt».")
 
     add("")
     add("⚡ Данные из открытых источников. Используйте только в законных целях.")

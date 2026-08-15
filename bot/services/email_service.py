@@ -116,6 +116,27 @@ def parse_h8mail(raw: str, email: str) -> list[str]:
 # GHunt
 # ----------------------------------------------------------------------------
 
+GHUNT_SETUP = (
+    "🔮 Настройка GHunt (разведка Google-аккаунтов):\n\n"
+    "1️⃣ Установите:\n"
+    "   <code>pip install ghunt</code>\n\n"
+    "2️⃣ Авторизуйтесь один раз в консоли:\n"
+    "   <code>ghunt login</code>\n"
+    "   Откроется браузер — войдите в Google и разрешите доступ.\n"
+    "   GHunt сам сохранит токен в файл <code>creds.data</code>:\n"
+    "   • Windows: <code>C:\\Users\\Имя\\.pyconfig\\ghunt\\creds.data</code>\n"
+    "   • Linux/Docker: <code>/root/.pyconfig/ghunt/creds.data</code>\n\n"
+    "3️⃣ Бот в Docker — примонтируйте папку с токеном (volume к сервису):\n"
+    "   <code>./ghunt:/root/.pyconfig/ghunt</code>\n"
+    "   и положите <code>creds.data</code> в папку <code>./ghunt</code> "
+    "рядом с docker-compose.yml.\n"
+    "   Либо укажите путь к папке с токеном в <code>.env</code>:\n"
+    "   <code>GHUNT_CONFIG_PATH=/путь/к/папке/с/creds.data</code>\n\n"
+    "4️⃣ Проверка: <code>ghunt check</code>\n"
+    "Документация: https://github.com/mxrch/ghunt"
+)
+
+
 def _ghunt_creds_exist() -> bool:
     """Проверяет наличие авторизации GHunt (creds.data)."""
     cfg = SETTINGS.ghunt_config_path
@@ -143,14 +164,12 @@ async def run_ghunt(email: str) -> str:
     try:
         ensure_binary(None, "ghunt")
     except ToolNotConfigured:
-        raise ToolNotConfigured("GHunt не установлен:\n<code>pip install ghunt</code>")
+        raise ToolNotConfigured(
+            "GHunt не установлен:\n<code>pip install ghunt</code>\n\n" + GHUNT_SETUP
+        )
 
     if not _ghunt_creds_exist():
-        raise ToolNotConfigured(
-            "GHunt не авторизован в Google.\n"
-            "Выполните один раз в консоли: <code>ghunt login</code> "
-            "(https://github.com/mxrch/ghunt)"
-        )
+        raise ToolNotConfigured("GHunt не авторизован в Google.\n\n" + GHUNT_SETUP)
 
     # Запускаем модуль напрямую (минуя баннер, который падает на Windows),
     # через python -c в отдельном процессе с UTF-8 и закрытым stdin.
@@ -211,46 +230,146 @@ def parse_ghunt(raw: str, email: str) -> dict:
     return {}
 
 
+def _holehe_status_ru(status: object) -> str:
+    """Русское отображение статуса сайта из holehe."""
+    mapping = {
+        "🇷🇺 FOUND": "найден",
+        "❌ NOT_FOUND": "не найден",
+        "rate_limited": "лимит запросов",
+        "error": "ошибка",
+        "not_checked": "не проверен",
+    }
+    return mapping.get(str(status), str(status))
+
+
+# Краткое описание каждого движка для блока «Что и как проверено»
+_ENGINE_DESC = {
+    "reg": "🪪 Регистрации в популярных сервисах (ВК/Instagram/TikTok/WhatsApp/Telegram/GitHub)",
+    "holehe": "🔎 holehe — на каких сайтах зарегистрирован email (120+ сервисов)",
+    "h8mail": "💥 h8mail — поиск email в базах утечек",
+    "ss": "🕸 socialscan — занятость email в соцсетях",
+    "ghunt": "🔮 GHunt — Google-профиль и связанные данные",
+}
+
+
+def _holehe_counts(holehe: dict) -> tuple[int, int, int, int]:
+    """Подсчёт (найдено, не найдено, ошибок/лимита, всего)."""
+    found = sum(1 for v in holehe.values() if "FOUND" in str(v))
+    not_found = sum(1 for v in holehe.values() if "NOT_FOUND" in str(v))
+    other = sum(1 for v in holehe.values() if str(v) in ("rate_limited", "error"))
+    return found, not_found, other, len(holehe)
+
+
 def format_email_report(email: str, holehe: dict | None = None,
                         h8mail_out: list[str] | None = None,
                         social: dict | None = None,
-                        ghunt: dict | None = None) -> str:
-    """Собирает итоговый отчёт по email."""
+                        ghunt: dict | None = None,
+                        registrations: list[dict] | None = None,
+                        attempted: list[str] | None = None) -> str:
+    """Собирает итоговый отчёт по email.
+
+    attempted — какие движки запускались («всё сразу»), чтобы честно показать,
+    что именно проверялось и что не выполнилось.
+    """
+    from bot.services.registration_service import format_registrations_section
+
     lines: list[str] = []
     add = lines.append
     add("<b>📧 ОТЧЁТ ПО EMAIL</b>")
     add(f"<blockquote>{str(email)}</blockquote>")
     add("")
 
-    if holehe:
-        found = {k: v for k, v in holehe.items() if "FOUND" in str(v)}
-        add(f"<b>🔎 holehe — аккаунтов найдено: {len(found)} из {len(holehe)}</b>")
-        for site, status in sorted(found.items(), key=lambda kv: str(kv[0]))[:25]:
-            add(f"│ <b>{str(site)}</b> — {str(status)}")
-        if len(found) > 25:
-            add(f"│ … ещё {len(found) - 25}")
+    # ---- Что и как проверено (сводка всех движков) ----
+    if attempted:
+        add("<b>🧰 Что и как проверено</b>")
+        for key in attempted:
+            desc = _ENGINE_DESC.get(key, f"⚙️ {key}")
+            if key == "reg" and registrations is not None:
+                ok = len([r for r in registrations if r.get("found")])
+                add(f"✅ {desc}: аккаунтов найдено — {ok}")
+            elif key == "holehe" and holehe is not None:
+                f, nf, oth, total = _holehe_counts(holehe)
+                add(f"✅ {desc}: найдено {f} из {total} · не найдено {nf}"
+                    + (f" · ошибок {oth}" if oth else ""))
+            elif key == "h8mail" and h8mail_out is not None:
+                add(f"✅ {desc}: найдено следов — {len(h8mail_out)}")
+            elif key == "ss" and social is not None:
+                found = sum(1 for v in social.values() if v == "Найден")
+                add(f"✅ {desc}: найдено {found} из {len(social)}")
+            elif key == "ghunt" and ghunt:
+                extra = "профиль получен"
+                if ghunt.get("name") or ghunt.get("email"):
+                    extra = f"имя: {ghunt.get('name') or ghunt.get('email')}"
+                add(f"✅ {desc}: {extra}")
+            else:
+                add(f"❌ {desc}: не выполнилось (см. ниже)")
+        add("")
+    elif any(x is not None for x in (holehe, h8mail_out, social, ghunt, registrations)):
+        add("<b>🧰 Что и как проверено</b>")
+        if registrations is not None:
+            ok = len([r for r in registrations if r.get("found")])
+            add(f"✅ {_ENGINE_DESC['reg']}: аккаунтов найдено — {ok}")
+        if holehe is not None:
+            f, nf, oth, total = _holehe_counts(holehe)
+            add(f"✅ {_ENGINE_DESC['holehe']}: найдено {f} из {total} · не найдено {nf}"
+                + (f" · ошибок {oth}" if oth else ""))
+        if h8mail_out is not None:
+            add(f"✅ {_ENGINE_DESC['h8mail']}: найдено следов — {len(h8mail_out)}")
+        if social is not None:
+            found = sum(1 for v in social.values() if v == "Найден")
+            add(f"✅ {_ENGINE_DESC['ss']}: найдено {found} из {len(social)}")
+        if ghunt:
+            add(f"✅ {_ENGINE_DESC['ghunt']}: профиль получен")
         add("")
 
+    # ---- holehe: полный список проверенных сайтов ----
+    if holehe:
+        f, nf, oth, total = _holehe_counts(holehe)
+        add(f"<b>🔎 holehe — {total} сайтов: найдено {f}, не найдено {nf}"
+            + (f", ошибок {oth}" if oth else "") + "</b>")
+        found_sorted = sorted(
+            ((k, v) for k, v in holehe.items() if "FOUND" in str(v)),
+            key=lambda kv: str(kv[0]),
+        )
+        if found_sorted:
+            add("— где email ЗАРЕГИСТРИРОВАН:")
+            for site, status in found_sorted[:40]:
+                add(f"│ ✅ <b>{str(site)}</b>")
+            if len(found_sorted) > 40:
+                add(f"│ … и ещё {len(found_sorted) - 40} сайтов")
+        if not found_sorted:
+            add("│ 🚫 Ни одного аккаунта не найдено")
+        add("")
+
+    # ---- socialscan ----
     if social:
-        add("<b>🕸 socialscan</b>")
+        add("<b>🕸 socialscan — занятость email в соцсетях</b>")
         for site, status in social.items():
-            mark = "⭕" if status == "Найден" else "✖️"
+            mark = "⭕" if status == "Найден" else ("✖️" if status == "Свободен" else "⚠️")
             add(f"│ {str(site)}: {mark} {str(status)}")
         add("")
 
+    # ---- h8mail: все утечки ----
     if h8mail_out:
         add(f"<b>💥 h8mail — утечек/следов: {len(h8mail_out)}</b>")
-        for line in h8mail_out[:25]:
+        for line in h8mail_out[:40]:
             add(f"│ {str(line)[:256]}")
+        if len(h8mail_out) > 40:
+            add(f"│ … и ещё {len(h8mail_out) - 40}")
         add("")
 
+    # ---- GHunt (Google) ----
     if ghunt:
-        add("<b>🔮 GHunt (Google)</b>")
+        add("<b>🔮 GHunt (Google) — профиль аккаунта</b>")
         if "raw" in ghunt:
             add(f"│ {str(ghunt['raw'])[:1000]}")
         else:
             for k, v in ghunt.items():
                 add(f"│ {str(k)}: <code>{str(v)}</code>")
+        add("")
+
+    if registrations:
+        add("\n".join(format_registrations_section(registrations)))
         add("")
 
     add("⚡ Данные из открытых источников. Используйте только в законных целях.")

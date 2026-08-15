@@ -142,6 +142,12 @@ async def run_snscrape(username: str) -> str:
             text = await run_cli_async(args)
         except (ServiceError, ToolNotConfigured):
             text = ""
+        if "Traceback (most recent call last):" in text or "AttributeError" in text:
+            # snscrape заброшен и не совместим с Python 3.12 (использует imp).
+            raise ToolNotConfigured(
+                "snscrape несовместим с Python 3.12 (заброшенная библиотека, "
+                "падает на импорте). Поставьте Python 3.10/3.11 либо пропустите."
+            )
         posts = [l for l in text.splitlines() if l.strip()]
         if posts:
             chunks.append(f"<b>{platform}</b>|" + "|".join(posts[:8]))
@@ -153,31 +159,10 @@ async def run_snscrape(username: str) -> str:
 # ----------------------------------------------------------------------------
 
 async def telegram_user_lookup(username: str) -> dict:
-    """Ищет Telegram-аккаунт по username через Telethon."""
-    if not SETTINGS.is_telethon_ready:
-        raise ToolNotConfigured(
-            "Telethon не настроен.\nДобавьте в .env TG_API_ID и TG_API_HASH (https://my.telegram.org/apps)"
-        )
-    from telethon import TelegramClient
+    """Ищет Telegram-аккаунт по username через Telethon (перебирает все сессии)."""
+    from bot.services.telethon_lookup import for_each_session
 
-    accounts = SETTINGS.tg_accounts
-    if not accounts:
-        raise ToolNotConfigured(
-            "Не заданы Telegram-аккаунты (<code>TG_ACCOUNTS</code> в .env).\n"
-            'Пример: {"+375291234567": "sess_1"}'
-        )
-
-    phone = next(iter(accounts), None)
-    session = accounts[phone] if phone else "anon"
-    client = TelegramClient(
-        session_path(session),
-        api_id=SETTINGS.tg_api_id,
-        api_hash=SETTINGS.tg_api_hash,
-    )
-    try:
-        await client.connect()
-        if not await client.is_user_authorized():
-            return {"found": None, "hint": "Сессия не авторизована"}
+    async def _lookup(client, phone):
         try:
             entity = await client.get_entity(username)
         except ValueError:
@@ -198,20 +183,36 @@ async def telegram_user_lookup(username: str) -> dict:
             "phone": getattr(entity, "phone", None),
             "type": type(entity).__name__,
         }
-    finally:
-        await client.disconnect()
+
+    result, hints = await for_each_session(_lookup)
+    if result:
+        return result
+    return {"found": None, "hint": "; ".join(hints) or "нет сессий"}
 
 
 def format_username_report(username: str, sherlock: list[str] | None = None,
                            social: dict | None = None,
                            snscrape_out: str | None = None,
-                           telegram: dict | None = None) -> str:
+                           telegram: dict | None = None,
+                           maigret: dict | None = None,
+                           public: list[dict] | None = None) -> str:
     """Собирает итоговый отчёт по никнейму."""
+    from bot.services.maigret_service import format_maigret_section
+    from bot.services.public_api import format_public_profiles_section
+
     lines: list[str] = []
     add = lines.append
     add(f"<b>🧑‍💻 ОТЧЁТ ПО НИКНЕЙМУ</b>")
     add(f"<blockquote>@{str(username)}</blockquote>")
     add("")
+
+    if public:
+        add("\n".join(format_public_profiles_section(public)))
+        add("")
+
+    if maigret:
+        add("\n".join(format_maigret_section(maigret)))
+        add("")
 
     if telegram:
         add("<b>✈️ Telegram</b>")

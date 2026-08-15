@@ -126,6 +126,51 @@ def test_parse_gps_zero_denominator_tags():
     assert any("Широта" in line for line in text)
 
 
+def test_parse_gps_extra_fields():
+    """Скорость/направление/точность/метод попадают в GPS-отчёт."""
+    data = {
+        "GPS GPSLatitude": "[55/1, 45/1, 0/1]",
+        "GPS GPSLatitudeRef": "N",
+        "GPS GPSLongitude": "[37/1, 36/1, 0/1]",
+        "GPS GPSLongitudeRef": "E",
+        "GPS GPSAltitude": "[253/1]",
+        "GPS GPSAltitudeRef": "0",
+        "GPS GPSSpeed": "[18/1]",
+        "GPS GPSSpeedRef": "K",
+        "GPS GPSImgDirection": "[90/1]",
+        "GPS GPSImgDirectionRef": "T",
+        "GPS GPSHPositioningError": "[3/1]",
+    }
+    gps, text, _ = _parse_gps(data)
+    assert gps["speed"] == pytest.approx(18.0)
+    assert gps["heading"] == pytest.approx(90.0)
+    assert gps["gps_error"] == pytest.approx(3.0)
+    assert any("Скорость" in line and "км/ч" in line for line in text)
+    assert any("Направление" in line for line in text)
+    assert any("Точность GPS" in line for line in text)
+
+
+def test_report_hashes_and_mp(tmp_path):
+    """Хэши файла считаются в данных, но НЕ выводятся в текст (компактность)."""
+    img_path = tmp_path / "full.jpg"
+    _make_jpeg_with_exif(img_path)
+    report = extract_photo(img_path)
+
+    assert len(report.file["MD5"]) == 32
+    assert len(report.file["SHA1"]) == 40
+    assert len(report.file["SHA256"]) == 64
+    assert report.image["Мегапиксели"] == pytest.approx(0.31)
+    assert report.image["Соотношение сторон"] == "4:3"
+
+    text = format_photo_report(report, img_path)
+    assert "🔐 Хэши файла" not in text
+    assert "MD5:" not in text
+    assert "Мп" in text
+    assert "Соотношение сторон" in text
+    assert "Размер" in text
+    assert len(text) < 4096
+
+
 def test_maps_links():
     links = build_maps_link(55.75, 37.6)
     assert "55.75" in links["google"]
@@ -153,7 +198,30 @@ def test_extract_full_report(tmp_path):
     assert report.gps is None
     text = format_photo_report(report, img_path)
     assert "<b>🖼 ОТЧЁТ ПО ИЗОБРАЖЕНИЮ</b>" in text
-    assert f"EXIF-теги ({report.raw_count} шт.)" in text
+    assert f"<blockquote>photo.jpg</blockquote>" in text
+    assert "▫ Файл" in text
+    assert "▫ Изображение" in text
+    assert "📱 Устройство съёмки" in text
+    # сырые IfdTag-заглушки (0x829A) не должны попадать в отчёт
+    assert "0x829A" not in text
+    assert "Byte=[" not in text
+
+
+def test_photo_report_curated_camera_params(tmp_path):
+    """Параметры съёмки выводятся на русском, без сырых тегов."""
+    img_path = tmp_path / "cam.jpg"
+    _make_jpeg_with_exif(img_path)
+
+    report = extract_photo(img_path)
+    text = format_photo_report(report, img_path)
+
+    assert "📸 Параметры съёмки" in text
+    assert "Дата съёмки" in text
+    assert "ПО" in text
+    # Make/Model ушли в «Устройство съёмки», сырые теги не вываливаются
+    assert "Model-X" in text.split("Устройство съёмки")[1]
+    assert "Make:" not in text
+    assert "Метаданных не найдено" not in text
 
 
 def test_photo_without_exif(tmp_path):

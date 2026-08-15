@@ -5,14 +5,17 @@ import asyncio
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from bot.config import SETTINGS
 from bot.db import DB
 from bot.exceptions import ProbivError, ServiceError, ToolNotConfigured
 from bot.filters import IsAdmin
+from bot.handlers.common import _STATE_BY_CATEGORY
 from bot.keyboards import after_result_menu
 from bot.services import email_service, phone_service, username_service
+from bot.services import public_api as public_api_service
+from bot.services import maigret_service, registration_service
 from bot.states import ProbivStates
 from bot.texts import STATUS_TEXT, error_text
 from bot.utils.formatting import split_message
@@ -50,9 +53,12 @@ async def _safe_many(specs: list[tuple[str, object, tuple, str]]) -> dict[str, t
     return {key: outcome for (key, _, _, _), outcome in zip(specs, outcomes)}
 
 
-async def _send_report(message: Message, builder, target: str, tool: str, category: str):
+async def _send_report(message: Message, builder, target: str, tool: str, category: str,
+                       state: FSMContext | None = None) -> None:
     """Пайплайн: статус → построение отчёта → отправка (с цитированием запроса)."""
     user_id = message.from_user.id if message.from_user else 0
+    if state is not None:
+        await state.update_data(last_target=target, last_category=category)
     status = await message.reply(STATUS_TEXT.format(target=target, tool=tool or "движок"))
     try:
         text = await builder(target)
@@ -104,6 +110,8 @@ async def phone_tool(target: str, tool: str) -> str:
     specs: list[tuple[str, object, tuple, str]] = [
         ("info", phone_service.phonenumbers_info, (e164,), "phonenumbers"),
     ]
+    if tool in ("all", "reg"):
+        specs.append(("reg", registration_service.check_registrations, (e164, "phone"), "регистрации"))
     if tool in ("all", "pinf"):
         specs.append(("pinf", phone_service.run_phoneinfoga, (e164,), "PhoneInfoga"))
     if tool in ("all", "tg"):
@@ -117,6 +125,14 @@ async def phone_tool(target: str, tool: str) -> str:
     info = out["info"][0] or {}
     if out["info"][1]:
         notes.append(out["info"][1])
+
+    registrations = None
+    if "reg" in out:
+        res, note = out["reg"]
+        if note:
+            notes.append(note)
+        elif res:
+            registrations = res
 
     pinf_lines = None
     if "pinf" in out:
@@ -148,6 +164,7 @@ async def phone_tool(target: str, tool: str) -> str:
         telegram=phone_telegram,
         phoneinfoga=pinf_lines,
         ignorant=igr_map,
+        registrations=registrations,
     )
     return _join_notes(text, notes)
 
@@ -156,7 +173,7 @@ async def phone_tool(target: str, tool: str) -> str:
 async def phone_input(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     tool = data.get("tool", "all")
-    await _send_report(message, lambda t: phone_tool(t, tool), message.text, tool, "phone")
+    await _send_report(message, lambda t: phone_tool(t, tool), message.text, tool, "phone", state)
 
 
 # --------------------------------------------------------------------------
@@ -166,19 +183,31 @@ async def phone_input(message: Message, state: FSMContext) -> None:
 async def username_tool(target: str, tool: str) -> str:
     username = normalize_username(target)
     specs: list[tuple[str, object, tuple, str]] = []
+    if tool in ("all", "maigret"):
+        specs.append(("maigret", maigret_service.run_maigret, (username,), "Maigret"))
     if tool in ("all", "sherlock"):
         specs.append(("sherlock", username_service.run_sherlock, (username,), "Sherlock"))
     if tool in ("all", "ss"):
         specs.append(("ss", username_service.run_socialscan, (f"@{username}",), "socialscan"))
-    if tool in ("all", "snscrape"):
+    if tool == "snscrape":
+        # snscrape устарел и не работает на Python 3.12 — включаем только по явному
+        # выбору движка, чтобы не ронять автопробив трейсбеками.
         specs.append(("snscrape", username_service.run_snscrape, (username,), "snscrape"))
     if tool in ("all", "tg"):
         specs.append(("tg", username_service.telegram_user_lookup, (username,), "Telegram"))
+    if tool in ("all", "pub"):
+        specs.append(("pub", public_api_service.check_public_profiles, (username,), "публичные API"))
 
     out = await _safe_many(specs)
     notes: list[str] = []
 
-    sherlock_lines = social_dict = snscrape_out = tg_dict = None
+    sherlock_lines = social_dict = snscrape_out = tg_dict = maigret_dict = pub_list = None
+    if "maigret" in out:
+        raw, note = out["maigret"]
+        if note:
+            notes.append(note)
+        else:
+            maigret_dict = maigret_service.parse_maigret(raw)
     if "sherlock" in out:
         res, note = out["sherlock"]
         if note:
@@ -203,6 +232,12 @@ async def username_tool(target: str, tool: str) -> str:
             notes.append(note)
         else:
             tg_dict = res
+    if "pub" in out:
+        res, note = out["pub"]
+        if note:
+            notes.append(note)
+        else:
+            pub_list = res
 
     text = username_service.format_username_report(
         username,
@@ -210,6 +245,8 @@ async def username_tool(target: str, tool: str) -> str:
         social=social_dict,
         snscrape_out=snscrape_out,
         telegram=tg_dict,
+        maigret=maigret_dict,
+        public=pub_list,
     )
     return _join_notes(text, notes)
 
@@ -218,7 +255,7 @@ async def username_tool(target: str, tool: str) -> str:
 async def username_input(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     tool = data.get("tool", "all")
-    await _send_report(message, lambda t: username_tool(t, tool), message.text, tool, "username")
+    await _send_report(message, lambda t: username_tool(t, tool), message.text, tool, "username", state)
 
 
 # --------------------------------------------------------------------------
@@ -228,6 +265,8 @@ async def username_input(message: Message, state: FSMContext) -> None:
 async def email_tool(target: str, tool: str) -> str:
     email = normalize_email(target)
     specs: list[tuple[str, object, tuple, str]] = []
+    if tool in ("all", "reg"):
+        specs.append(("reg", registration_service.check_registrations, (email, "email"), "регистрации"))
     if tool in ("all", "holehe"):
         specs.append(("holehe", email_service.run_holehe, (email,), "holehe"))
     if tool in ("all", "h8mail"):
@@ -240,7 +279,13 @@ async def email_tool(target: str, tool: str) -> str:
     out = await _safe_many(specs)
     notes: list[str] = []
 
-    holehe_dict = h8mail_lines = social_dict = ghunt_dict = None
+    holehe_dict = h8mail_lines = social_dict = ghunt_dict = registrations = None
+    if "reg" in out:
+        res, note = out["reg"]
+        if note:
+            notes.append(note)
+        elif res:
+            registrations = res
     if "holehe" in out:
         raw, note = out["holehe"]
         if note:
@@ -272,6 +317,8 @@ async def email_tool(target: str, tool: str) -> str:
         h8mail_out=h8mail_lines,
         social=social_dict,
         ghunt=ghunt_dict,
+        registrations=registrations,
+        attempted=[key for key, _, _, _ in specs],
     )
     return _join_notes(text, notes)
 
@@ -280,4 +327,42 @@ async def email_tool(target: str, tool: str) -> str:
 async def email_input(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     tool = data.get("tool", "all")
-    await _send_report(message, lambda t: email_tool(t, tool), message.text, tool, "email")
+    await _send_report(message, lambda t: email_tool(t, tool), message.text, tool, "email", state)
+
+
+# --------------------------------------------------------------------------
+# Повторный поиск по кнопке (без повторного ввода цели)
+# --------------------------------------------------------------------------
+
+@router.callback_query(IsAdmin(), F.data.startswith("retool:"))
+async def on_retool_callback(call: CallbackQuery, state: FSMContext) -> None:
+    """Кнопка «Повторить» / «Искать аккаунт в ТГ» — ищет по сохранённой цели."""
+    try:
+        _, category, tool = call.data.split(":", 2)
+    except ValueError:
+        await call.answer("Неверная кнопка", show_alert=True)
+        return
+
+    data = await state.get_data()
+    target = data.get("last_target")
+    if not target:
+        await call.answer("Сначала сделайте поиск — потом нажимайте кнопки", show_alert=True)
+        return
+
+    builders = {
+        "phone": phone_tool,
+        "username": username_tool,
+        "email": email_tool,
+    }
+    builder = builders.get(category)
+    if builder is None:
+        await call.answer("Для этой категории повтор недоступен", show_alert=True)
+        return
+
+    await state.set_state(_STATE_BY_CATEGORY.get(category, ProbivStates.MENU))
+    await state.update_data(tool=tool)
+    await _send_report(call.message, lambda t: builder(t, tool), target, tool, category, state)
+    try:
+        await call.answer()
+    except Exception:  # noqa: BLE001
+        pass

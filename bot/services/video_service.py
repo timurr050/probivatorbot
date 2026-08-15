@@ -21,6 +21,7 @@ from typing import Optional
 from bot.exceptions import ServiceError
 from bot.services.devices import recognize_device
 from bot.services.photo_service import build_maps_link, reverse_geocode
+from bot.utils.formatting import esc
 
 # атомы-контейнеры, внутрь которых нужно заходить
 _CONTAINERS = {
@@ -308,7 +309,7 @@ def format_video_report(report: VideoReport, path: Path) -> str:
     lines: list[str] = []
     add = lines.append
     add("<b>🎬 ОТЧЁТ ПО ВИДЕО</b>")
-    add(f"└ <code>{str(path.name)}</code>")
+    add(f"<blockquote>{esc(str(path.name))}</blockquote>")
     add("")
 
     add("<b>▫ Файл</b>")
@@ -331,8 +332,10 @@ def format_video_report(report: VideoReport, path: Path) -> str:
 
     if report.gps:
         add("<b>📍 GPS-координаты</b>")
+        add("<blockquote>")
         for line in report.gps_text:
-            add(f"│ {str(line)}")
+            add(esc(line))
+        add("</blockquote>")
         if report.maps:
             add(f"│ Google Maps: <a href='{report.maps['google']}'>открыть</a>")
             add(f"│ Яндекс Карты: <a href='{report.maps['yandex']}'>открыть</a>")

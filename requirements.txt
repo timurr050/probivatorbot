@@ -14,7 +14,9 @@ h8mail>=2.5                   # поиск email в утечках (требуе
 sherlock-project>=0.16        # поиск username по 400+ сайтам (CLI sherlock)
 ignorant>=1.2                 # поиск телефона по соцсетям
 ghunt>=2.0                    # разведка по аккаунту Google (GHunt)
-snscrape>=0.7                 # сбор постов Twitter/X и Instagram
+snscrape>=0.7                 # сбор постов Twitter/X, Instagram, Reddit, Telegram
+maigret>=0.6                  # поиск username по 3000+ сайтам (HTTP + регулярки, без ключей)
+curl-cffi>=0.7                # HTTP-запросы с подменой TLS-отпечатка (JA3/JA4) — обход Cloudflare
 geopy>=2.4                    # обратное геокодирование координат GPS (опционально)
 
 # ===== Тесты / разработка =====
