@@ -34,7 +34,7 @@ def check_phone_local() -> str:
 
 
 def check_phoneinfoga() -> str:
-    raw = phone_service.run_phoneinfoga("+12125654777")
+    raw = asyncio.run(phone_service.run_phoneinfoga("+12125654777"))
     ok = "Country: US" in raw or "succeeded" in raw
     return f"OK   PhoneInfoga (scan works)" if ok else f"FAIL PhoneInfoga: {raw[:120]}"
 

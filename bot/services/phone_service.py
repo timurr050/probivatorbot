@@ -271,7 +271,13 @@ async def _maybe_avatar_photo(client, user) -> Optional[str]:
 # ----------------------------------------------------------------------------
 
 async def run_ignorant(e164: str) -> str:
-    """Ищет номер в соцсетях через CLI ignorant."""
+    """Ищет номер в соцсетях через CLI ignorant.
+
+    ignorant принимает positional-аргументы: <country code> <phone number>
+    (пример: ``ignorant +375 291234567``). Флага ``--phone`` не существует,
+    поэтому раскладываем E.164 на код страны и национальный номер через
+    phonenumbers.
+    """
     try:
         binary = ensure_binary(None, "ignorant")
     except ToolNotConfigured:
@@ -279,25 +285,50 @@ async def run_ignorant(e164: str) -> str:
             "ignorant не установлен.\n<code>pip install ignorant</code>"
         )
     try:
+        number = phonenumbers.parse(e164, None)
+        cc = f"+{number.country_code}"
+        nn = str(number.national_number)
+    except Exception:  # noqa: BLE001 — невалидный номер, искать негде
+        return ""
+    try:
         return await run_cli_async(
-            [str(binary), "--phone", _digits(e164), "--only-used"],
+            [str(binary), cc, nn, "--only-used"],
             timeout=SETTINGS.cli_timeout,
         )
     except (ToolTimeout, ExternalToolError, ServiceError):
         return ""
 
 
+_IGNORANT_RE = re.compile(r"^\[([+\-x])\]\s*(\S+)")
+
+
 def parse_ignorant(raw: str, e164: str) -> dict:
-    """Превращает вывод ignorant в словарь {сайт: 'Found'|'Not found'|'Error'}."""
+    """Превращает вывод ignorant в словарь {сайт: 'Found'|'Not found'|'Error'}.
+
+    Поддерживаются оба формата вывода:
+      * реальный ignorant: ``[+] site.com`` / ``[-] site.com`` / ``[x] site.com``;
+      * устаревший/тестовый: ``Site -> Text``.
+    Легенда ``[+] Phone number used, [-] ...`` отсекается (домен должен
+    содержать точку и не содержать пробелов/запятых).
+    """
     result: dict[str, str] = {}
     for line in raw.splitlines():
-        if "->" not in line:
+        line = line.strip()
+        m = _IGNORANT_RE.match(line)
+        if m:
+            mark, site = m.group(1), m.group(2).strip()
+            if " " in site or "," in site or "." not in site:
+                continue  # легенда/баннер, а не результат по сайту
+            status = {"+": "Found", "-": "Not found", "x": "Error"}.get(mark, "Error")
+            if site:
+                result[site] = status
             continue
-        site, _, status = line.partition("->")
-        site = site.strip(" ░.:=\t ")
-        status = status.strip().split(".")[0]
-        if site:
-            result[site] = status
+        if "->" in line:
+            site, _, status = line.partition("->")
+            site = site.strip(" ░.:=\t ")
+            status = status.strip()
+            if site:
+                result[site] = status
     return result
 
 
