@@ -4,6 +4,7 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.services.username_service import snscrape_supported
 from bot.utils.validators import (
     EMAIL_FORMAT_HINT,
     PHONE_FORMAT_HINT,
@@ -81,6 +82,8 @@ def main_menu() -> InlineKeyboardMarkup:
 def tools_menu(category: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for tool_key, label in TOOLS.get(category, [("all", "🚀 Всё сразу")]):
+        if tool_key == "snscrape" and not snscrape_supported():
+            label = f"{label} 🚫"
         kb.button(text=label, callback_data=f"tool:{category}:{tool_key}")
     kb.button(text="⬅️ Назад", callback_data="cmd:menu")
     kb.adjust(1)

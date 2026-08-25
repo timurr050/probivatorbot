@@ -10,10 +10,37 @@
 from __future__ import annotations
 
 import re
+import sys
 
 from bot.config import SETTINGS
 from bot.exceptions import ServiceError, ToolNotConfigured
 from bot.services.base import ensure_binary, run_cli, run_cli_async, session_path
+
+# ----------------------------------------------------------------------------
+# Совместимость snscrape
+# ----------------------------------------------------------------------------
+
+_SNSCRAPE_SUPPORTED: bool | None = None
+
+
+def snscrape_supported() -> bool:
+    """True, если snscrape можно запустить в текущей среде.
+
+    snscrape заброшен и использует удалённый в Python 3.12 модуль ``imp``
+    (``imp.find_module``), поэтому его CLI падает сразу при старте. Чтобы не
+    «ронять» прогон трейсбеком, помечаем движок как недоступный заранее.
+    """
+    global _SNSCRAPE_SUPPORTED
+    if _SNSCRAPE_SUPPORTED is None:
+        if sys.version_info >= (3, 12):
+            _SNSCRAPE_SUPPORTED = False
+        else:
+            try:
+                import snscrape.modules  # noqa: F401  (тянет imp.find_module)
+                _SNSCRAPE_SUPPORTED = True
+            except Exception:  # noqa: BLE001
+                _SNSCRAPE_SUPPORTED = False
+    return _SNSCRAPE_SUPPORTED
 
 RESULT_LINK_HINT = "llll: лдн"
 
@@ -127,7 +154,18 @@ def parse_socialscan(raw: str) -> dict[str, str]:
 # ----------------------------------------------------------------------------
 
 async def run_snscrape(username: str) -> str:
-    """Собирает посты username в Twitter/X и Instagram через snscrape."""
+    """Собирает посты username в Twitter/X и Instagram через snscrape.
+
+    Если snscrape несовместим с текущим Python (3.12+, удалён ``imp``),
+    движок «честно отключён» — возвращаем понятное сообщение вместо трейсбека.
+    """
+    if not snscrape_supported():
+        raise ToolNotConfigured(
+            "snscrape отключён: несовместим с Python 3.12+ (заброшенная "
+            "библиотека, использует удалённый модуль <code>imp</code>). "
+            "Поставьте Python 3.10/3.11 либо выберите другой движок."
+        )
+
     try:
         binary = ensure_binary(None, "snscrape")
     except ToolNotConfigured:
@@ -143,10 +181,10 @@ async def run_snscrape(username: str) -> str:
         except (ServiceError, ToolNotConfigured):
             text = ""
         if "Traceback (most recent call last):" in text or "AttributeError" in text:
-            # snscrape заброшен и не совместим с Python 3.12 (использует imp).
+            # запасной вариант, если snscrape сломан иначе, чем ожидалось
             raise ToolNotConfigured(
-                "snscrape несовместим с Python 3.12 (заброшенная библиотека, "
-                "падает на импорте). Поставьте Python 3.10/3.11 либо пропустите."
+                "snscrape несовместим с текущей средой (падает на запуске). "
+                "Поставьте Python 3.10/3.11 либо выберите другой движок."
             )
         posts = [l for l in text.splitlines() if l.strip()]
         if posts:
