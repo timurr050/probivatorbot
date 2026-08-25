@@ -361,10 +361,40 @@ def _err_note(exc: Exception) -> str:
 
 
 def _profile_url(service: dict, target: str, target_type: str) -> str:
+    """Прямая ссылка на профиль, где она однозначно строится из цели.
+
+    * username — есть у всех сервисов (t.me, instagram, tiktok, github);
+    * phone    — у WhatsApp (wa.me/<номер> реально открывает чат с этим
+                  номером). У VK/Instagram/TikTok публичной ссылки «по номеру»
+                  не существует (привязка скрыта), поэтому возвращаем "";
+    * email    — прямой профиль по email не резолвится, возвращаем "".
+    """
     if target_type == "username":
-        return {"telegram": f"https://t.me/{target}",
-                "instagram": f"https://www.instagram.com/{target}/",
-                "tiktok": f"https://www.tiktok.com/@{target}"}.get(service["key"], "")
+        return {
+            "telegram": f"https://t.me/{target}",
+            "instagram": f"https://www.instagram.com/{target}/",
+            "tiktok": f"https://www.tiktok.com/@{target}",
+            "github": f"https://github.com/{target}",
+        }.get(service["key"], "")
+    if target_type == "phone":
+        if service["key"] == "whatsapp":
+            digits = _digits(target)
+            if digits:
+                return f"https://wa.me/{digits}"
+        return ""
+    return ""
+
+
+def _search_url(service: dict, target: str, target_type: str) -> str:
+    """Резервная ссылка-поиск, когда прямого профиля нет (честно помечаем)."""
+    if target_type == "phone":
+        digits = _digits(target)
+        if service["key"] == "vk":
+            return f"https://vk.com/search?c[phone]={digits}"
+        if service["key"] == "instagram":
+            return f"https://www.instagram.com/"
+        if service["key"] == "tiktok":
+            return f"https://www.tiktok.com/"
     return ""
 
 
@@ -415,6 +445,7 @@ async def check_registrations(target: str, target_type: str) -> list[dict]:
             "emoji": service["emoji"],
             "found": bool(found) if found is not None else None,
             "url": _profile_url(service, norm, target_type),
+            "search": _search_url(service, norm, target_type),
             "note": "",
         }
 
@@ -457,6 +488,10 @@ def format_registrations_section(results: list[dict]) -> list[str]:
             line += f" <i>({esc(note)})</i>"
         if r.get("url"):
             line += f" — <a href='{r['url']}'>профиль</a>"
+        elif r.get("search"):
+            line += f" — <a href='{r['search']}'>поиск</a>"
+        elif found is True:
+            line += " <i>(прямая ссылка недоступна — привязка скрыта)</i>"
         add(line)
     add("│ Instagram/TikTok/VK/WhatsApp защищены от ботов — "
         "результат может требовать повтора.")

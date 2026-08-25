@@ -392,7 +392,11 @@ def format_phone_report(e164: str, info: dict, telegram: dict | None = None,
         add(f"│ Найдено: <code>{len(found)}</code> из <code>{len(ignorant)}</code>")
         if found:
             for k in found[:15]:
-                add(f"│ <b>{str(k)}</b> → {str(ignorant[k])}")
+                site = str(k)
+                if "." in site:
+                    add(f"│ <a href='https://{site}'>{site}</a> → {str(ignorant[k])}")
+                else:
+                    add(f"│ <b>{site}</b> → {str(ignorant[k])}")
         if missing:
             add(f"│ Не найдено: {', '.join(str(k) for k in missing[:10])}")
         add("")
