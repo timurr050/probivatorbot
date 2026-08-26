@@ -34,6 +34,7 @@ TOOLS = {
         ("sherlock", "🕵️ Sherlock"),
         ("ss", "🕸 socialscan"),
         ("snscrape", "📰 snscrape"),
+        ("tw", "🐦 Twitter (twscrape)"),
         ("tg", "✈️ Telegram"),
     ],
     "email": [

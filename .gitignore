@@ -22,3 +22,8 @@ tools/phoneinfoga-src/
 # IDE
 .idea/
 .vscode/
+
+# runtime SQLite DB (состояние бота, не коммитить)
+*.db
+data/
+

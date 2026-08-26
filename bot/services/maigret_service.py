@@ -114,12 +114,13 @@ def format_maigret_section(parsed: dict) -> list[str]:
 
     add = lines.append
     add(f"<b>🕵️ Maigret — аккаунтов найдено: {len(found)}</b>")
-    for entry in found[:40]:
+    for entry in found:
         site = str(entry["site"])
-        url = str(entry["url"])
-        add(f"│ 🔗 <b>{site}</b>: <a href='{url}'>открыть профиль</a>")
-        for detail in entry["detail"][:6]:
+        url = str(entry["url"]).strip()
+        if url:
+            add(f"│ 🔗 <b>{site}</b>: <a href='{url}'>открыть профиль</a>")
+        else:
+            add(f"│ 🔗 <b>{site}</b>")
+        for detail in entry["detail"][:8]:
             add(f"│    └ {detail}")
-    if len(found) > 40:
-        add(f"│ … ещё {len(found) - 40}")
     return lines

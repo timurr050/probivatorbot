@@ -2,7 +2,7 @@
 
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](https://www.python.org)
 [![aiogram 3](https://img.shields.io/badge/aiogram-3.x-2C8EBB)](https://docs.aiogram.pro)
-[![Tests](https://img.shields.io/badge/tests-78%20passed-green)](tests/)
+[![Tests](https://img.shields.io/badge/tests-125%20passed-green)](tests/)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
 [![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)](.github/workflows/ci-cd.yml)
 
@@ -23,6 +23,7 @@
 - [Установка (локально)](#-установка)
 - [Конфигурация .env и где взять ключи](#-конфигурация-env)
 - [Движки и их установка](#-движки-где-установить-и-что-будет-без-них)
+- [Используемые библиотеки](#-используемые-библиотеки)
 - [Docker: запуск, реплики, авто-масштабирование](#-docker-запуск-реплики-и-авто-масштабирование)
 - [Деплой на сервер (CI/CD)](#-деплой-на-сервер-cicd-тесты--ssh-деплой)
 - [Тесты](#-тесты)
@@ -79,7 +80,7 @@ ProbivBot/
 │       ├── formatting.py       # HTML-экранирование, split длинных сообщений
 │       └── filehelpers.py      # Безопасное скачивание медиа во временные файлы
 │
-└── tests/                      # Pytest-тесты (78 шт., оффлайн)
+└── tests/                      # Pytest-тесты (125 шт., оффлайн)
     ├── test_validators.py
     ├── test_formatting.py
     ├── test_phone_service.py
@@ -269,6 +270,7 @@ Copy-Item .env.example .env
 | `socialscan` | Проверка email/username/телефона на соцсетях | `pip install socialscan` (https://github.com/iojw/socialscan) | Кнопка пропускается с пометкой |
 | `snscrape` | Последние посты username в X, Instagram, Reddit, Telegram | `pip install snscrape` (https://github.com/JustAnotherArchivist/snscrape) | Кнопка пропускается с пометкой |
 | `maigret` | Никнейм на 3000+ сайтах (прямые HTTP-запросы + регулярки, без ключей) | `pip install maigret` (https://github.com/soxoj/maigret) | Кнопка пропускается с пометкой |
+| `twscrape` | Профиль и твиты Twitter/X по нику (прямые запросы к API X) | `pip install twscrape` (https://github.com/vladkens/twscrape) + добавить аккаунт в пул (`python -m twscrape add_accounts`) | Кнопка «🐦 Twitter» пропускается с пометкой «нет аккаунтов Twitter» |
 | `curl-cffi` | Проверка «есть ли аккаунт» по email/телефону в ВК/Instagram/TikTok/WhatsApp/Telegram/GitHub (подмена TLS-отпечатка JA3/JA4 — обход Cloudflare) | `pip install curl-cffi` (https://github.com/lexiforest/curl_cffi) | Секция «🪪 Аккаунты в популярных сервисах» пропускается |
 | `exifread` + Pillow | Максимум метаданных фото: EXIF, GPS, MakerNote, DPI, ICC | `pip install exifread Pillow` | Фото-анализ недоступен |
 | `video_service` (чистый Python) | Метаданные видео MP4/MOV: даты, длительность, дорожки, ilst (©mak/©mod/©day/©xyz), GPS → адрес (без ffprobe) | входит в проект | Видео-анализ недоступен |
@@ -282,6 +284,43 @@ Copy-Item .env.example .env
 > Примечание: `python-telegram-phone-number-checker` — не существует как PyPI-пакет
 > (это инструмент-обёртка над Telethon). Проверка номера в Telegram реализована нативно
 > через Telethon в `bot/services/phone_service.py::check_telegram`.
+
+---
+
+## 📦 Используемые библиотеки
+
+Полный список зависимостей — в [`requirements.txt`](requirements.txt). Кратко по группам:
+
+### Ядро бота
+| Библиотека | Назначение |
+|---|---|
+| `aiogram` (3.x) | Telegram Bot API, асинхронный фреймворк, FSM, inline-клавиатуры |
+| `python-dotenv` | Чтение конфигурации из `.env` |
+| `aiohttp` | HTTP-клиент для aiogram / запросов к Telegram API |
+| `pytest` + `pytest-asyncio` | Оффлайн-тесты (входят в образ, но не в runtime) |
+
+### OSINT-движки (Python-пакеты)
+| Библиотека | Что даёт |
+|---|---|
+| `phonenumbers` | Разбор/валидация номера: страна, оператор, гео, тип, таймзоны |
+| `telethon` | MTProto-клиент Telegram: номер в TG, инфо по username |
+| `exifread` + `Pillow` | Метаданные фото (EXIF, GPS, DPI, ICC) |
+| `socialscan` | Проверка доступности email/username/телефона в соцсетях |
+| `holehe` | Регистрация email на 120+ сайтах |
+| `h8mail` | Поиск email в публичных утечках |
+| `sherlock-project` | Поиск username по 400+ сайтам (CLI) |
+| `ignorant` | Поиск телефона по соцсетям (CLI) |
+| `ghunt` | Разведка по Google-аккаунту |
+| `snscrape` | Посты X/Instagram/Reddit/Telegram (⚠️ несовместим с Python 3.12 — отключён) |
+| `maigret` | Поиск username по 3000+ сайтам (HTTP + регулярки) |
+| `twscrape` | Профиль и твиты Twitter/X по нику (нужен аккаунт Twitter в пуле) |
+| `curl-cffi` | HTTP с подменой TLS-отпечатка (JA3/JA4) — обход Cloudflare/защиты |
+| `geopy` | Обратное геокодирование GPS-координат в адрес |
+
+### Внешние CLI-инструменты (не PyPI, качаются/ставятся отдельно)
+| Инструмент | Назначение |
+|---|---|
+| `PhoneInfoga` | Глубокое сканирование номера (в Docker качается автоматически) |
 
 ---
 
@@ -368,7 +407,7 @@ HTML-экранирование и `split_message` — режет длинные
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests -q
-# 78 passed
+# 125 passed
 ```
 
 Все тесты оффлайн: валидация, парсеры, EXIF (генерируется через Pillow), GPS-математика,

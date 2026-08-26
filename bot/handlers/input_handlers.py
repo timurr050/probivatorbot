@@ -5,7 +5,8 @@ import asyncio
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config import SETTINGS
 from bot.db import DB
@@ -15,11 +16,45 @@ from bot.handlers.common import _STATE_BY_CATEGORY
 from bot.keyboards import after_result_menu
 from bot.services import email_service, phone_service, username_service
 from bot.services import public_api as public_api_service
-from bot.services import maigret_service, registration_service
+from bot.services import maigret_service, registration_service, twscrape_service
 from bot.states import ProbivStates
 from bot.texts import STATUS_TEXT, error_text
 from bot.utils.formatting import split_message
 from bot.utils.validators import normalize_email, normalize_phone, normalize_username
+
+import uuid
+
+# Хранилище постраничных отчётов (один процесс бота). Ключ -> страницы + мета.
+_PAGER: dict[str, dict] = {}
+_PAGER_MAX = 200
+PAGE_SIZE = 3800
+
+
+def _pager_store(pages: list[str], category: str, tool: str) -> str:
+    key = uuid.uuid4().hex[:12]
+    _PAGER[key] = {"pages": pages, "category": category, "tool": tool}
+    if len(_PAGER) > _PAGER_MAX:
+        # вытесняем самый старый ключ
+        old = next(iter(_PAGER))
+        _PAGER.pop(old, None)
+    return key
+
+
+def _pager_keyboard(key: str, idx: int, total: int, category: str, tool: str) -> InlineKeyboardMarkup:
+    """Клавиатура навигации по страницам + кнопки повтора/меню."""
+    builder = InlineKeyboardBuilder()
+    nav: list[InlineKeyboardButton] = []
+    if idx > 0:
+        nav.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"pg:{key}:{idx - 1}"))
+    nav.append(InlineKeyboardButton(text=f"📄 {idx + 1}/{total}", callback_data=f"pg:{key}:{idx}"))
+    if idx < total - 1:
+        nav.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"pg:{key}:{idx + 1}"))
+    if nav:
+        builder.row(*nav)
+    # кнопки «Повторить / ТГ / Ключи / Меню» из after_result_menu
+    for row in after_result_menu(category, tool).inline_keyboard:
+        builder.row(*row)
+    return builder.as_markup()
 
 router = Router(name="input")
 
@@ -72,16 +107,11 @@ async def _send_report(message: Message, builder, target: str, tool: str, catego
         return
 
     await status.delete()
-    parts = split_message(text)
-    for i, part in enumerate(parts):
-        if i == 0:
-            await message.reply(part)
-        else:
-            await message.answer(part)
-    await message.answer(
-        "✔️ Готово. Результат собран из открытых источников.",
-        reply_markup=after_result_menu(category, tool),
-    )
+    parts = split_message(text, max_len=PAGE_SIZE)
+    key = _pager_store(parts, category, tool)
+    kb = _pager_keyboard(key, 0, len(parts), category, tool)
+    await message.reply(parts[0], reply_markup=kb)
+    # одно сообщение-«моталка»: навигация переключает страницы в нём же.
 
     state = "partial" if "Частично не выполнено" in text else "ok"
     _log(user_id, category, tool, target, state, report=text)
@@ -197,11 +227,14 @@ async def username_tool(target: str, tool: str) -> str:
         specs.append(("tg", username_service.telegram_user_lookup, (username,), "Telegram"))
     if tool in ("all", "pub"):
         specs.append(("pub", public_api_service.check_public_profiles, (username,), "публичные API"))
+    if tool == "tw":
+        # twscrape требует аккаунт Twitter — подключаем только по явному выбору
+        specs.append(("tw", twscrape_service.run_twscrape, (username,), "Twitter/X"))
 
     out = await _safe_many(specs)
     notes: list[str] = []
 
-    sherlock_lines = social_dict = snscrape_out = tg_dict = maigret_dict = pub_list = None
+    sherlock_lines = social_dict = snscrape_out = tg_dict = maigret_dict = pub_list = tw_dict = None
     if "maigret" in out:
         raw, note = out["maigret"]
         if note:
@@ -238,6 +271,12 @@ async def username_tool(target: str, tool: str) -> str:
             notes.append(note)
         else:
             pub_list = res
+    if "tw" in out:
+        raw, note = out["tw"]
+        if note:
+            notes.append(note)
+        else:
+            tw_dict = raw
 
     text = username_service.format_username_report(
         username,
@@ -247,6 +286,7 @@ async def username_tool(target: str, tool: str) -> str:
         telegram=tg_dict,
         maigret=maigret_dict,
         public=pub_list,
+        tw=tw_dict,
     )
     return _join_notes(text, notes)
 
@@ -366,3 +406,35 @@ async def on_retool_callback(call: CallbackQuery, state: FSMContext) -> None:
         await call.answer()
     except Exception:  # noqa: BLE001
         pass
+
+
+# --------------------------------------------------------------------------
+# Постраничная навигация по отчёту (кнопки «Назад / Вперёд»)
+# --------------------------------------------------------------------------
+
+@router.callback_query(IsAdmin(), F.data.startswith("pg:"))
+async def on_pg_callback(call: CallbackQuery) -> None:
+    """Переключает страницу отчёта в том же сообщении."""
+    try:
+        _, key, idx_s = call.data.split(":")
+        idx = int(idx_s)
+    except (ValueError, AttributeError):
+        await call.answer("Неверная кнопка", show_alert=True)
+        return
+
+    entry = _PAGER.get(key)
+    if not entry:
+        await call.answer("Отчёт устарел — сделайте поиск заново", show_alert=True)
+        return
+
+    pages = entry["pages"]
+    if idx < 0 or idx >= len(pages):
+        await call.answer()
+        return
+
+    kb = _pager_keyboard(key, idx, len(pages), entry["category"], entry["tool"])
+    try:
+        await call.message.edit_text(pages[idx], reply_markup=kb)
+    except Exception:  # noqa: BLE001 — текст страницы совпал с текущим
+        pass
+    await call.answer()

@@ -117,7 +117,7 @@ _PINFOGA_SECTIONS = {
     "General": "📄 Общий поиск",
 }
 
-_MAX_LINKS_PER_SECTION = 5
+_MAX_LINKS_PER_SECTION = 1000  # без обрезки: все ссылки показываем (пагинация в боте)
 
 
 def _link_domain(url: str) -> str:
@@ -188,7 +188,7 @@ def summarize_phoneinfoga(raw: str, e164: str) -> list[str]:
         links = []
         for url in shown:
             site = _link_domain(url)
-            links.append(f'<a href="{url}">{site or "ссылка"}</a>')
+            links.append(f'<a href="{url}">{site or "ссылка"} 🔍</a>')
         extra = f" (+ещё {len(urls) - len(shown)})" if len(urls) > len(shown) else ""
         out.append(f"{label} ({len(urls)}): " + " · ".join(links) + extra)
 

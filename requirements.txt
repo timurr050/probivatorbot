@@ -16,6 +16,7 @@ ignorant>=1.2                 # поиск телефона по соцсетя�
 ghunt>=2.0                    # разведка по аккаунту Google (GHunt)
 snscrape>=0.7                 # сбор постов Twitter/X, Instagram, Reddit, Telegram
 maigret>=0.6                  # поиск username по 3000+ сайтам (HTTP + регулярки, без ключей)
+twscrape>=0.20                # Twitter/X: профиль и твиты по нику (нужен аккаунт Twitter)
 curl-cffi>=0.7                # HTTP-запросы с подменой TLS-отпечатка (JA3/JA4) — обход Cloudflare
 geopy>=2.4                    # обратное геокодирование координат GPS (опционально)
 

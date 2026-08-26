@@ -109,7 +109,7 @@ def parse_h8mail(raw: str, email: str) -> list[str]:
             continue
         if line not in result:
             result.append(line)
-    return result[:40]
+    return result
 
 
 # ----------------------------------------------------------------------------
@@ -333,10 +333,8 @@ def format_email_report(email: str, holehe: dict | None = None,
         )
         if found_sorted:
             add("— где email ЗАРЕГИСТРИРОВАН:")
-            for site, status in found_sorted[:40]:
+            for site, status in found_sorted:
                 add(f"│ ✅ <b>{str(site)}</b>")
-            if len(found_sorted) > 40:
-                add(f"│ … и ещё {len(found_sorted) - 40} сайтов")
         if not found_sorted:
             add("│ 🚫 Ни одного аккаунта не найдено")
         add("")
@@ -352,10 +350,8 @@ def format_email_report(email: str, holehe: dict | None = None,
     # ---- h8mail: все утечки ----
     if h8mail_out:
         add(f"<b>💥 h8mail — утечек/следов: {len(h8mail_out)}</b>")
-        for line in h8mail_out[:40]:
+        for line in h8mail_out:
             add(f"│ {str(line)[:256]}")
-        if len(h8mail_out) > 40:
-            add(f"│ … и ещё {len(h8mail_out) - 40}")
         add("")
 
     # ---- GHunt (Google) ----

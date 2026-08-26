@@ -229,11 +229,12 @@ async def telegram_user_lookup(username: str) -> dict:
 
 
 def format_username_report(username: str, sherlock: list[str] | None = None,
-                           social: dict | None = None,
-                           snscrape_out: str | None = None,
-                           telegram: dict | None = None,
-                           maigret: dict | None = None,
-                           public: list[dict] | None = None) -> str:
+                            social: dict | None = None,
+                            snscrape_out: str | None = None,
+                            telegram: dict | None = None,
+                            maigret: dict | None = None,
+                            public: list[dict] | None = None,
+                            tw: dict | None = None) -> str:
     """Собирает итоговый отчёт по никнейму."""
     from bot.services.maigret_service import format_maigret_section
     from bot.services.public_api import format_public_profiles_section
@@ -246,6 +247,11 @@ def format_username_report(username: str, sherlock: list[str] | None = None,
 
     if public:
         add("\n".join(format_public_profiles_section(public)))
+        add("")
+
+    if tw:
+        from bot.services.twscrape_service import format_twscrape_section
+        add("\n".join(format_twscrape_section(tw)))
         add("")
 
     if maigret:
@@ -283,10 +289,8 @@ def format_username_report(username: str, sherlock: list[str] | None = None,
 
     if sherlock:
         add(f"<b>🕵️ Sherlock — найдено на {len(sherlock)} сервисах</b>")
-        for line in sherlock[:30]:
+        for line in sherlock:
             add(f"│ {str(line)}")
-        if len(sherlock) > 30:
-            add(f"│ … и ещё {len(sherlock) - 30}")
         add("")
 
     if snscrape_out:
