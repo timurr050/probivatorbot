@@ -405,6 +405,7 @@ async def check_registrations(target: str, target_type: str) -> list[dict]:
     Какие сервисы проверять — фильтруется через REG_SERVICES в .env.
     Возвращает список: [{key, label, emoji, found: bool|None, url, note}].
     """
+    return[]
     if not _curl_available():
         raise ToolNotConfigured(
             "curl_cffi не установлен:\n<code>pip install curl-cffi</code>\n"
