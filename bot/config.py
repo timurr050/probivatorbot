@@ -27,7 +27,7 @@ class Settings:
 
     bot_token: str
     admin_ids: tuple[int, ...] = ()
-    restrict_to_admins: bool = False
+    restrict_to_admins: bool = True
     cli_encoding: str = "utf-8"
     cli_timeout: int = 90
 
@@ -108,7 +108,7 @@ def load_settings() -> Settings:
     return Settings(
         bot_token=token,
         admin_ids=_parse_int_list(os.getenv("ADMIN_IDS")),
-        restrict_to_admins=_env_bool(os.getenv("RESTRICT_TO_ADMINS")),
+        restrict_to_admins=_env_bool(os.getenv("RESTRICT_TO_ADMINS"), default=True),
         cli_encoding=os.getenv("CLI_ENCODING", "utf-8"),
         cli_timeout=_env_int(os.getenv("CLI_TIMEOUT"), 90),
         phoneinfoga_path=os.getenv("PHONEINFOGA_PATH") or None,
